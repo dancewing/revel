@@ -97,16 +97,16 @@ Deprecating support for golang versions prior to 1.7
   - `revel package` & `revel build` now supports environment mode PR revel/cmd#14
   - `revel clean` now cleans generated routes too PR revel/cmd#6
 - `revel/config`:
-  - Upstream `robfig/config` refresh and import path updated from `github.com/revel/revel/config` to `github.com/revel/config`, PR #868
-  - Config loading order and external configuration to override application configuration revel/config#4 [commit](https://github.com/revel/revel/commit/f3a422c228994978ae0a5dd837afa97248b26b41)
-  - Application config error will produce insight on error PR revel/config#3 [commit](https://github.com/revel/config/commit/85a123061070899a82f59c5ef6187e8fb4457f64)
+  - Upstream `robfig/config` refresh and import path updated from `github.com/dancewing/revel/config` to `github.com/dancewing/revel/config`, PR #868
+  - Config loading order and external configuration to override application configuration revel/config#4 [commit](https://github.com/dancewing/revel/commit/f3a422c228994978ae0a5dd837afa97248b26b41)
+  - Application config error will produce insight on error PR revel/config#3 [commit](https://github.com/dancewing/revel/config/commit/85a123061070899a82f59c5ef6187e8fb4457f64)
 - `revel/modules`:
   - Testrunner enhancements
     - Minor improvement on testrunner module PR #820, #895
     - Add Test Runner panels per test group PR revel/modules#12
 - `revel/revel.github.io`:
-  - Update `index.md` and homepage (change how samples repo is installed) PR [#85](https://github.com/revel/revel.github.io/pull/85)
-  - Couple of UI improvements PR [#93](https://github.com/revel/revel.github.io/pull/93)
+  - Update `index.md` and homepage (change how samples repo is installed) PR [#85](https://github.com/dancewing/revel.github.io/pull/85)
+  - Couple of UI improvements PR [#93](https://github.com/dancewing/revel.github.io/pull/93)
   - Updated techempower benchmarks Round 11 [URL](http://www.techempower.com/benchmarks/#section=data-r11)
   - Docs updated for v0.13 release
 - Cross-Platform Support
@@ -128,7 +128,7 @@ This is a minor release to address a critical bug (#824) in v0.11.2.
 Everybody is strongly encouraged to rebuild their projects with the latest version of Revel. To do it, execute the commands:
 
 ``` sh
-$ go get -u github.com/revel/cmd/revel
+$ go get -u github.com/dancewing/revel/cmd/revel
 
 $ revel build github.com/myusername/myproject /path/to/destination/folder
 ```
@@ -142,7 +142,7 @@ This is a minor release to address a critical bug in v0.11.0.
 Everybody is strongly encouraged to rebuild their projects with the latest version of Revel. To do it, execute the commands:
 
 ``` sh
-$ go get -u github.com/revel/cmd/revel
+$ go get -u github.com/dancewing/revel/cmd/revel
 
 $ revel build github.com/myusername/myproject /path/to/destination/folder
 ```
@@ -165,7 +165,7 @@ Changes since v0.11.3:
 ``` go
 package tests
 
-import "github.com/revel/revel/testing"
+import "github.com/dancewing/revel/testing"
 
 type AppTest struct {
     testing.TestSuite
@@ -174,62 +174,62 @@ type AppTest struct {
 1. We've relocated modules to a dedicated repo. Make sure you update your `conf/app.conf`. For example, change:
 
 ``` ini
-module.static=github.com/revel/revel/modules/static
-module.testrunner = github.com/revel/revel/modules/testrunner
+module.static=github.com/dancewing/revel/modules/static
+module.testrunner = github.com/dancewing/revel/modules/testrunner
 ```
 
 to the new paths:
 
 ``` ini
-module.static=github.com/revel/modules/static
-module.testrunner = github.com/revel/modules/testrunner
+module.static=github.com/dancewing/revel/modules/static
+module.testrunner = github.com/dancewing/revel/modules/testrunner
 ```
 
 ## [ROADMAP] Focus: Improve Internal Organization
 
 The majority of our effort here is increasing the modularity of the code within Revel so that further development can be done more productively while keeping documentation up to date.
 - `revel/revel.github.io`
-  - [x] Improve docs #[43](https://github.com/revel/revel.github.io/pull/43)
+  - [x] Improve docs #[43](https://github.com/dancewing/revel.github.io/pull/43)
 - `revel/revel`:
-  - [x] Move the `revel/revel/harness` to the `revel/cmd` repo since it's only used during build time. #[714](https://github.com/revel/revel/issues/714)
-  - [x] Move `revel/revel/modules` to the `revel/modules` repo #[785](https://github.com/revel/revel/issues/785)
-  - [x] Move `revel/revel/samples` to the `revel/samples` repo #[784](https://github.com/revel/revel/issues/784)
-  - [x] `testing` TestSuite #[737](https://github.com/revel/revel/issues/737) #[810](https://github.com/revel/revel/issues/810)
-  - [x] Feature/sane http timeout defaults #[837](https://github.com/revel/revel/issues/837) PR#[843](https://github.com/revel/revel/issues/843) Bug Fix PR#[860](https://github.com/revel/revel/issues/860)
-  - [x] Eagerly load templates in dev mode #[353](https://github.com/revel/revel/issues/353) PR#[844](https://github.com/revel/revel/pull/844)
-  - [x] Add an option to trim whitespace from rendered HTML #[800](https://github.com/revel/revel/issues/800)
-  - [x] Remove built-in mailer in favor of 3rd party package #[783](https://github.com/revel/revel/issues/783)
-  - [x] Allow local reverse proxy access to jobs module status page for IPv4/6 #[481](https://github.com/revel/revel/issues/481) PR#[6](https://github.com/revel/modules/pull/6) PR#[7](https://github.com/revel/modules/pull/7)
-  - [x] Add default http.Status code for render methods. #[728](https://github.com/revel/revel/issues/728)
-  - [x] add domain for cookie #[770](https://github.com/revel/revel/issues/770) PR#[882](https://github.com/revel/revel/pull/882)
-  - [x] production mode panic bug #[831](https://github.com/revel/revel/issues/831) PR#[881](https://github.com/revel/revel/pull/881)
-  - [x] Fixes template loading order whether watcher is enabled or not #[844](https://github.com/revel/revel/issues/844)
-  - [x] Fixes reverse routing wildcard bug PR#[886](https://github.com/revel/revel/pull/886) #[869](https://github.com/revel/revel/issues/869)
-  - [x] Fixes router app start bug without routes. PR #[855](https://github.com/revel/revel/pull/855)
-  - [x] Friendly URL template errors; Fixes template `url` func "index out of range" when param is `undefined` #[811](https://github.com/revel/revel/issues/811) PR#[880](https://github.com/revel/revel/pull/880)
-  - [x] Make result compression conditional PR#[888](https://github.com/revel/revel/pull/888)
-  - [x] ensure routes are loaded before returning from OnAppStart callback PR#[884](https://github.com/revel/revel/pull/884)
-  - [x] Use "302 Found" HTTP code for redirect PR#[900](https://github.com/revel/revel/pull/900)
-  - [x] Fix broken fake app tests PR#[899](https://github.com/revel/revel/pull/899)
-  - [x] Optimize search of template names PR#[885](https://github.com/revel/revel/pull/885)
+  - [x] Move the `revel/revel/harness` to the `revel/cmd` repo since it's only used during build time. #[714](https://github.com/dancewing/revel/issues/714)
+  - [x] Move `revel/revel/modules` to the `revel/modules` repo #[785](https://github.com/dancewing/revel/issues/785)
+  - [x] Move `revel/revel/samples` to the `revel/samples` repo #[784](https://github.com/dancewing/revel/issues/784)
+  - [x] `testing` TestSuite #[737](https://github.com/dancewing/revel/issues/737) #[810](https://github.com/dancewing/revel/issues/810)
+  - [x] Feature/sane http timeout defaults #[837](https://github.com/dancewing/revel/issues/837) PR#[843](https://github.com/dancewing/revel/issues/843) Bug Fix PR#[860](https://github.com/dancewing/revel/issues/860)
+  - [x] Eagerly load templates in dev mode #[353](https://github.com/dancewing/revel/issues/353) PR#[844](https://github.com/dancewing/revel/pull/844)
+  - [x] Add an option to trim whitespace from rendered HTML #[800](https://github.com/dancewing/revel/issues/800)
+  - [x] Remove built-in mailer in favor of 3rd party package #[783](https://github.com/dancewing/revel/issues/783)
+  - [x] Allow local reverse proxy access to jobs module status page for IPv4/6 #[481](https://github.com/dancewing/revel/issues/481) PR#[6](https://github.com/dancewing/revel/modules/pull/6) PR#[7](https://github.com/dancewing/revel/modules/pull/7)
+  - [x] Add default http.Status code for render methods. #[728](https://github.com/dancewing/revel/issues/728)
+  - [x] add domain for cookie #[770](https://github.com/dancewing/revel/issues/770) PR#[882](https://github.com/dancewing/revel/pull/882)
+  - [x] production mode panic bug #[831](https://github.com/dancewing/revel/issues/831) PR#[881](https://github.com/dancewing/revel/pull/881)
+  - [x] Fixes template loading order whether watcher is enabled or not #[844](https://github.com/dancewing/revel/issues/844)
+  - [x] Fixes reverse routing wildcard bug PR#[886](https://github.com/dancewing/revel/pull/886) #[869](https://github.com/dancewing/revel/issues/869)
+  - [x] Fixes router app start bug without routes. PR #[855](https://github.com/dancewing/revel/pull/855)
+  - [x] Friendly URL template errors; Fixes template `url` func "index out of range" when param is `undefined` #[811](https://github.com/dancewing/revel/issues/811) PR#[880](https://github.com/dancewing/revel/pull/880)
+  - [x] Make result compression conditional PR#[888](https://github.com/dancewing/revel/pull/888)
+  - [x] ensure routes are loaded before returning from OnAppStart callback PR#[884](https://github.com/dancewing/revel/pull/884)
+  - [x] Use "302 Found" HTTP code for redirect PR#[900](https://github.com/dancewing/revel/pull/900)
+  - [x] Fix broken fake app tests PR#[899](https://github.com/dancewing/revel/pull/899)
+  - [x] Optimize search of template names PR#[885](https://github.com/dancewing/revel/pull/885)
 - `revel/cmd`:
-  - [x] track current Revel version #[418](https://github.com/revel/revel/issues/418) PR#[858](https://github.com/revel/revel/pull/858)
-  - [x] log path error After revel build? #[763](https://github.com/revel/revel/issues/763)
-  - [x] Use a separate directory for revel project binaries #[17](https://github.com/revel/cmd/pull/17) #[819](https://github.com/revel/revel/issues/819)
-  - [x] Overwrite generated app files instead of deleting directory #[551](https://github.com/revel/revel/issues/551) PR#[23](https://github.com/revel/cmd/pull/23)
+  - [x] track current Revel version #[418](https://github.com/dancewing/revel/issues/418) PR#[858](https://github.com/dancewing/revel/pull/858)
+  - [x] log path error After revel build? #[763](https://github.com/dancewing/revel/issues/763)
+  - [x] Use a separate directory for revel project binaries #[17](https://github.com/dancewing/revel/cmd/pull/17) #[819](https://github.com/dancewing/revel/issues/819)
+  - [x] Overwrite generated app files instead of deleting directory #[551](https://github.com/dancewing/revel/issues/551) PR#[23](https://github.com/dancewing/revel/cmd/pull/23)
 - `revel/modules`:
-  - [x] Adds runtime pprof/trace support #[9](https://github.com/revel/modules/pull/9)
+  - [x] Adds runtime pprof/trace support #[9](https://github.com/dancewing/revel/modules/pull/9)
 - Community Goals:
-  - [x] Issue labels #[545](https://github.com/revel/revel/issues/545)
-    - [x] Sync up labels/milestones in other repos #[721](https://github.com/revel/revel/issues/721)
+  - [x] Issue labels #[545](https://github.com/dancewing/revel/issues/545)
+    - [x] Sync up labels/milestones in other repos #[721](https://github.com/dancewing/revel/issues/721)
   - [x] Update the Revel Manual to reflect current features
-    - [x] [revel/revel.github.io/32](https://github.com/revel/revel.github.io/issues/32)
-    - [x] [revel/revel.github.io/39](https://github.com/revel/revel.github.io/issues/39)
-    - [x] Docs are obsolete, inaccessible TestRequest.testSuite #[791](https://github.com/revel/revel/issues/791)
-    - [x] Some questions about revel & go docs #[793](https://github.com/revel/revel/issues/793)
-  - [x] RFCs to organize features #[827](https://github.com/revel/revel/issues/827)
+    - [x] [revel/revel.github.io/32](https://github.com/dancewing/revel.github.io/issues/32)
+    - [x] [revel/revel.github.io/39](https://github.com/dancewing/revel.github.io/issues/39)
+    - [x] Docs are obsolete, inaccessible TestRequest.testSuite #[791](https://github.com/dancewing/revel/issues/791)
+    - [x] Some questions about revel & go docs #[793](https://github.com/dancewing/revel/issues/793)
+  - [x] RFCs to organize features #[827](https://github.com/dancewing/revel/issues/827)
 
-[Full list of commits](https://github.com/revel/revel/compare/v0.11.3...v0.12.0)
+[Full list of commits](https://github.com/dancewing/revel/compare/v0.11.3...v0.12.0)
 
 
 # v0.11.0
@@ -267,7 +267,7 @@ Changes since v0.10:
 
 [FTR]   #606    CSRF Support
 
-[Full list of commits](https://github.com/revel/revel/compare/v0.10.0...v0.11.0)
+[Full list of commits](https://github.com/dancewing/revel/compare/v0.10.0...v0.11.0)
 
 
 # v0.10.0
@@ -320,7 +320,7 @@ Changes since v0.9.1:
 - [ENH] #461 - Cron jobs not started until I pull a page
 - [ENH] #323 - disable session/set-cookie for `Static.Serve()`
 
-[Full list of commits](https://github.com/revel/revel/compare/v0.9.1...v0.10.0)
+[Full list of commits](https://github.com/dancewing/revel/compare/v0.9.1...v0.10.0)
 
 
 # v0.9.1
@@ -332,7 +332,7 @@ Changes since v0.9.0:
 - [BUG] #529 - Wrong path was used to determine existence of `.git`
 - [BUG] #532 - Fix typo for new type `ValidEmail`
 
-The full list of commits can be found [here](https://github.com/revel/revel/compare/v0.9.0...v0.9.1).
+The full list of commits can be found [here](https://github.com/dancewing/revel/compare/v0.9.0...v0.9.1).
 
 
 # v0.9.0
@@ -342,16 +342,16 @@ The full list of commits can be found [here](https://github.com/revel/revel/comp
 
 We've moved development of the framework to the @revel GitHub organization, to help manage the project as Revel grows. The old import path is still valid, but will not be updated in the future.
 
-You'll need to manually update your apps to work with the new import path. This can be done by replacing all instances of `github.com/robfig/revel` with `github.com/revel/revel` in your app, and running:
+You'll need to manually update your apps to work with the new import path. This can be done by replacing all instances of `github.com/robfig/revel` with `github.com/dancewing/revel` in your app, and running:
 
 ```
 $ cd your_app_folder
 $ go get -u github.com/howeyc/fsnotify  # needs updating
-$ go get github.com/revel/revel
-$ go get github.com/revel/cmd/revel     # command line tools have moved
+$ go get github.com/dancewing/revel
+$ go get github.com/dancewing/revel/cmd/revel     # command line tools have moved
 ```
 
-**Note:** if you have references to `github.com/robfig/revel/revel` in any files, you need to replace them with `github.com/revel/cmd/revel` _before_ replacing `github.com/robfig/revel`! (note the prefix collision)
+**Note:** if you have references to `github.com/robfig/revel/revel` in any files, you need to replace them with `github.com/dancewing/revel/cmd/revel` _before_ replacing `github.com/robfig/revel`! (note the prefix collision)
 
 If you have any trouble upgrading or notice something we missed, feel free to hop in the IRC channel (#revel on Freenode) or send the mailing list a message.
 
@@ -377,7 +377,7 @@ Changes since v0.8:
 - [ENH] #508 - Support arbitrary network types
 - [ENH] #516 - Add Date and Message-Id mail headers
 
-The full list of commits can be found [here](https://github.com/revel/revel/compare/v0.8...v0.9.0).
+The full list of commits can be found [here](https://github.com/dancewing/revel/compare/v0.8...v0.9.0).
 
 
 # v0.8

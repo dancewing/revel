@@ -12,7 +12,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/revel/config"
+	"github.com/dancewing/revel/config"
 )
 
 const (

@@ -15,12 +15,12 @@ import (
 	"strings"
 
 	"github.com/agtorre/gocolorize"
-	"github.com/revel/config"
+	"github.com/dancewing/revel/config"
 )
 
 const (
 	// RevelImportPath Revel framework import path
-	RevelImportPath = "github.com/revel/revel"
+	RevelImportPath = "github.com/dancewing/revel"
 )
 
 type revelLogs struct {
@@ -47,7 +47,7 @@ var (
 	DevMode bool   // if true, RunMode is a development mode.
 
 	// Revel installation details
-	RevelPath string // e.g. "$GOPATH/src/github.com/revel/revel"
+	RevelPath string // e.g. "$GOPATH/src/github.com/dancewing/revel"
 
 	// Where to look for templates
 	// Ordered by priority. (Earlier paths take precedence over later paths.)
@@ -366,7 +366,7 @@ func addModule(name, importPath, modulePath string) {
 
 	// Hack: There is presently no way for the testrunner module to add the
 	// "test" subdirectory to the CodePaths.  So this does it instead.
-	if importPath == Config.StringDefault("module.testrunner", "github.com/revel/modules/testrunner") {
+	if importPath == Config.StringDefault("module.testrunner", "github.com/dancewing/revel/modules/testrunner") {
 		CodePaths = append(CodePaths, filepath.Join(BasePath, "tests"))
 	}
 }

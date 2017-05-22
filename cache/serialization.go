@@ -10,7 +10,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/revel/revel"
+	"github.com/dancewing/revel"
 )
 
 // Serialize transforms the given value into bytes following these rules:

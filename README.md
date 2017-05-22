@@ -12,7 +12,7 @@ Current Version: 0.15.0 (2017-05-11)
 
 Install revel framework:
 
-	go get -u github.com/revel/cmd/revel
+	go get -u github.com/dancewing/revel/cmd/revel
 
 Create a new app and run it:
 
@@ -30,13 +30,13 @@ Open http://localhost:9000 in your browser and you should see "It works!"
 ## Learn More
 
 * [Manual, Samples, Godocs, etc](http://revel.github.io)
-* [Apps using Revel](https://github.com/revel/revel/wiki/Apps-in-the-Wild)
-* [Articles Featuring Revel](https://github.com/revel/revel/wiki/Articles)
+* [Apps using Revel](https://github.com/dancewing/revel/wiki/Apps-in-the-Wild)
+* [Articles Featuring Revel](https://github.com/dancewing/revel/wiki/Articles)
 
 ## Contributing
 
-* [Contributing Code Guidelines](https://github.com/revel/revel/blob/master/CONTRIBUTING.md)
-* [Revel Contributors](https://github.com/revel/revel/graphs/contributors)
+* [Contributing Code Guidelines](https://github.com/dancewing/revel/blob/master/CONTRIBUTING.md)
+* [Revel Contributors](https://github.com/dancewing/revel/graphs/contributors)
 
 
 ## Gratitude
@@ -49,7 +49,7 @@ Finally, we'd like to thank the professional organizations that have supported t
 
 ## Announcements
 
-View the [v0.15.0 release notes](https://github.com/revel/revel/releases/tag/v0.15.0)
+View the [v0.15.0 release notes](https://github.com/dancewing/revel/releases/tag/v0.15.0)
 for all of the relevant changes.
 
 We are working on increasing the speed and quality of our releases. Your feedback has never been so valuable, please share your thoughts with us and help shape Revel!

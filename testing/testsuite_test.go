@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/revel/revel"
+	"github.com/dancewing/revel"
 )
 
 func TestMisc(t *testing.T) {
