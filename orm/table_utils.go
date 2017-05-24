@@ -23,6 +23,21 @@ func getTableName(val reflect.Value) string {
 	return snakeString(reflect.Indirect(val).Type().Name())
 }
 
+//getTableKeys get table primary keys
+func getTableKeys(val reflect.Value) []string {
+	if fun := val.MethodByName("TableKeys"); fun.IsValid() {
+		vals := fun.Call([]reflect.Value{})
+		// has return and the first val is string
+		if len(vals) >0 && vals[0].CanInterface() {
+			if d, ok := vals[0].Interface().([]string); ok {
+				return d
+			}
+		}
+	}
+	return nil
+}
+
+
 // get table engine, mysiam or innodb.
 func getTableEngine(val reflect.Value) string {
 	fun := val.MethodByName("TableEngine")

@@ -14,8 +14,6 @@
 
 package orm
 
-import ()
-
 // Params stores the Params
 type Params map[string]interface{}
 
@@ -25,6 +23,14 @@ type ParamsList []interface{}
 type Inserter interface {
 	Insert(interface{}) (int64, error)
 	Close() error
+}
+
+// Fielder define field info
+type Fielder interface {
+	String() string
+	FieldType() int
+	SetRaw(interface{}) error
+	RawValue() interface{}
 }
 
 // QuerySeter query seter
@@ -175,4 +181,6 @@ type QuerySeter interface {
 	// 	Found int
 	// }
 	RowsToStruct(ptrStruct interface{}, keyCol, valueCol string) (int64, error)
+
+	GT(string, interface{}) QuerySeter
 }

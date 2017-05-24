@@ -13,6 +13,8 @@ package orm
 
 import (
 	"database/sql"
+	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -190,4 +192,31 @@ func (t *Transaction) Query(query string, args ...interface{}) (*sql.Rows, error
 		defer t.dbmap.trace(now, query, args...)
 	}
 	return t.tx.Query(query, args...)
+}
+
+// return a QuerySeter for table operations.
+// table name can be string or struct.
+// e.g. QueryTable("user"), QueryTable(&user{}) or QueryTable((*User)(nil)),
+func (t *Transaction) QueryTable(ptrStructOrTableName interface{}) (qs QuerySeter) {
+
+	val := reflect.ValueOf(ptrStructOrTableName)
+	typ := reflect.Indirect(val).Type()
+
+	switch ptrStructOrTableName.(type) {
+	case string:
+		name := snakeString(ptrStructOrTableName.(string))
+		if tmap, er := t.dbmap.TableForName(name, true); er == nil {
+			qs = newQuerySet(t.dbmap, tmap)
+		}
+	case interface{}:
+		if tmap, er := t.dbmap.TableFor(typ, true); er == nil {
+			qs = newQuerySet(t.dbmap, tmap)
+		}
+	default:
+
+	}
+	if qs == nil {
+		panic(fmt.Errorf("<Transaction.QueryTable> table name: `%s` not exists", ptrStructOrTableName))
+	}
+	return
 }

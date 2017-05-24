@@ -27,6 +27,26 @@ type MySQLDialect struct {
 	Encoding string
 }
 
+// mysql operators.
+var mysqlOperators = map[string]string{
+	"exact":     "= ?",
+	"iexact":    "LIKE ?",
+	"contains":  "LIKE BINARY ?",
+	"icontains": "LIKE ?",
+	// "regex":       "REGEXP BINARY ?",
+	// "iregex":      "REGEXP ?",
+	"gt":          "> ?",
+	"gte":         ">= ?",
+	"lt":          "< ?",
+	"lte":         "<= ?",
+	"eq":          "= ?",
+	"ne":          "!= ?",
+	"startswith":  "LIKE BINARY ?",
+	"endswith":    "LIKE BINARY ?",
+	"istartswith": "LIKE ?",
+	"iendswith":   "LIKE ?",
+}
+
 func (d MySQLDialect) QuerySuffix() string { return ";" }
 
 func (d MySQLDialect) ToSqlType(val reflect.Type, maxsize int, isAutoIncr bool) string {
@@ -168,4 +188,9 @@ func (d MySQLDialect) IfTableExists(command, schema, table string) string {
 
 func (d MySQLDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
+}
+
+// get mysql operator.
+func (d MySQLDialect) OperatorSQL(operator string) string {
+	return mysqlOperators[operator]
 }

@@ -20,6 +20,24 @@ type SqliteDialect struct {
 	suffix string
 }
 
+// sqlite operators.
+var sqliteOperators = map[string]string{
+	"exact":       "= ?",
+	"iexact":      "LIKE ? ESCAPE '\\'",
+	"contains":    "LIKE ? ESCAPE '\\'",
+	"icontains":   "LIKE ? ESCAPE '\\'",
+	"gt":          "> ?",
+	"gte":         ">= ?",
+	"lt":          "< ?",
+	"lte":         "<= ?",
+	"eq":          "= ?",
+	"ne":          "!= ?",
+	"startswith":  "LIKE ? ESCAPE '\\'",
+	"endswith":    "LIKE ? ESCAPE '\\'",
+	"istartswith": "LIKE ? ESCAPE '\\'",
+	"iendswith":   "LIKE ? ESCAPE '\\'",
+}
+
 func (d SqliteDialect) QuerySuffix() string { return ";" }
 
 func (d SqliteDialect) ToSqlType(val reflect.Type, maxsize int, isAutoIncr bool) string {
@@ -116,4 +134,9 @@ func (d SqliteDialect) IfTableExists(command, schema, table string) string {
 
 func (d SqliteDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
+}
+
+// get sqlite operator.
+func (d SqliteDialect) OperatorSQL(operator string) string {
+	return sqliteOperators[operator]
 }

@@ -276,3 +276,165 @@ func indirectType(v reflect.Type) reflect.Type {
 		return v
 	}
 }
+
+// get fields description as flatted string.
+func getFlatParams(fi *ColumnMap, args []interface{}, tz *time.Location) (params []interface{}) {
+
+outFor:
+	for _, arg := range args {
+		val := reflect.ValueOf(arg)
+
+		if arg == nil {
+			params = append(params, arg)
+			continue
+		}
+
+		kind := val.Kind()
+		if kind == reflect.Ptr {
+			val = val.Elem()
+			kind = val.Kind()
+			arg = val.Interface()
+		}
+
+		switch kind {
+		case reflect.String:
+			v := val.String()
+			if fi != nil {
+				if fi.fieldType == TypeTimeField || fi.fieldType == TypeDateField || fi.fieldType == TypeDateTimeField {
+					var t time.Time
+					var err error
+					if len(v) >= 19 {
+						s := v[:19]
+						t, err = time.ParseInLocation(formatDateTime, s, DefaultTimeLoc)
+					} else if len(v) >= 10 {
+						s := v
+						if len(v) > 10 {
+							s = v[:10]
+						}
+						t, err = time.ParseInLocation(formatDate, s, tz)
+					} else {
+						s := v
+						if len(s) > 8 {
+							s = v[:8]
+						}
+						t, err = time.ParseInLocation(formatTime, s, tz)
+					}
+					if err == nil {
+						if fi.fieldType == TypeDateField {
+							v = t.In(tz).Format(formatDate)
+						} else if fi.fieldType == TypeDateTimeField {
+							v = t.In(tz).Format(formatDateTime)
+						} else {
+							v = t.In(tz).Format(formatTime)
+						}
+					}
+				}
+			}
+			arg = v
+		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+			arg = val.Int()
+		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			arg = val.Uint()
+		case reflect.Float32:
+			arg, _ = StrTo(ToStr(arg)).Float64()
+		case reflect.Float64:
+			arg = val.Float()
+		case reflect.Bool:
+			arg = val.Bool()
+		case reflect.Slice, reflect.Array:
+			if _, ok := arg.([]byte); ok {
+				continue outFor
+			}
+
+			var args []interface{}
+			for i := 0; i < val.Len(); i++ {
+				v := val.Index(i)
+
+				var vu interface{}
+				if v.CanInterface() {
+					vu = v.Interface()
+				}
+
+				if vu == nil {
+					continue
+				}
+
+				args = append(args, vu)
+			}
+
+			if len(args) > 0 {
+				p := getFlatParams(fi, args, tz)
+				params = append(params, p...)
+			}
+			continue outFor
+		case reflect.Struct:
+			if v, ok := arg.(time.Time); ok {
+				if fi != nil && fi.fieldType == TypeDateField {
+					arg = v.In(tz).Format(formatDate)
+				} else if fi != nil && fi.fieldType == TypeDateTimeField {
+					arg = v.In(tz).Format(formatDateTime)
+				} else if fi != nil && fi.fieldType == TypeTimeField {
+					arg = v.In(tz).Format(formatTime)
+				} else {
+					arg = v.In(tz).Format(formatDateTime)
+				}
+			} else {
+				typ := val.Type()
+				name := getFullName(typ)
+				var value interface{}
+				if mmi, err := fi.Table.dbmap.TableFor(typ, true); err != nil {
+					if _, vu, exist := getExistPk(mmi, val); exist {
+						value = vu
+					}
+				}
+
+				arg = value
+
+				if arg == nil {
+					panic(fmt.Errorf("need a valid args value, unknown table or value `%s`", name))
+				}
+			}
+		}
+
+		params = append(params, arg)
+	}
+	return
+}
+
+// get pk column info.
+func getExistPk(mi *TableMap, ind reflect.Value) (column string, value interface{}, exist bool) {
+	fi := mi.keys[0]
+
+	v := ind.FieldByIndex(fi.fieldIndex)
+	if fi.fieldType&IsPositiveIntegerField > 0 {
+		vu := v.Uint()
+		exist = vu > 0
+		value = vu
+	} else if fi.fieldType&IsIntegerField > 0 {
+		vu := v.Int()
+		exist = true
+		value = vu
+	} else if fi.fieldType&IsRelField > 0 {
+		_, value, exist = getExistPk(fi.relModelInfo, reflect.Indirect(v))
+	} else {
+		vu := v.String()
+		exist = vu != ""
+		value = vu
+	}
+
+	column = fi.ColumnName
+	return
+}
+
+func convertToFilterExpr(input string, operator string) (expr string) {
+
+	if input == "" {
+		expr = ""
+		return
+	}
+	d := strings.Split(input, ".")
+	d = append(d, operator)
+	expr = strings.Join(d, "__")
+	return
+
+}

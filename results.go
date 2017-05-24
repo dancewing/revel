@@ -30,7 +30,7 @@ type Result interface {
 // If RunMode is "dev", this results in a friendly error page.
 type ErrorResult struct {
 	ViewArgs map[string]interface{}
-	Error      error
+	Error    error
 }
 
 func (r ErrorResult) Apply(req *Request, resp *Response) {
@@ -129,7 +129,7 @@ func (r PlaintextErrorResult) Apply(req *Request, resp *Response) {
 // RenderTemplateResult action methods returns this result to request
 // a template be rendered.
 type RenderTemplateResult struct {
-	Template   Template
+	Template Template
 	ViewArgs map[string]interface{}
 }
 

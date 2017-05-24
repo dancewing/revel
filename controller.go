@@ -130,7 +130,7 @@ func (c *Controller) RenderTemplate(templatePath string) Result {
 	}
 
 	return &RenderTemplateResult{
-		Template:   template,
+		Template: template,
 		ViewArgs: c.ViewArgs,
 	}
 }

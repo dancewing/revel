@@ -18,6 +18,8 @@ import "reflect"
 // Unique and MaxSize only inform the
 // CreateTables() function and are not used by Insert/Update/Delete/Get.
 type ColumnMap struct {
+	Table *TableMap
+
 	// Column name in db table
 	ColumnName string
 
@@ -42,6 +44,20 @@ type ColumnMap struct {
 	isPK       bool
 	isAutoIncr bool
 	isNotNull  bool
+
+	fieldType int
+
+	fieldIndex          []int
+	rel                 bool // if type equal to RelForeignKey, RelOneToOne, RelManyToMany then true
+	reverse             bool
+	reverseField        string
+	reverseFieldInfo    *ColumnMap
+	reverseFieldInfoTwo *ColumnMap
+	reverseFieldInfoM2M *ColumnMap
+	relTable            string
+	relThrough          string
+	relThroughModelInfo *TableMap
+	relModelInfo        *TableMap
 }
 
 // Rename allows you to specify the column name in the table

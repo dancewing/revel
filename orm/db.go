@@ -23,11 +23,6 @@ import (
 	"time"
 )
 
-var (
-	DefaultTimeLoc   = time.Local
-	DefaultRelsDepth = 2
-)
-
 // DbMap is the root gorp mapping object. Create one of these for each
 // database schema you wish to map.  Each DbMap contains a list of
 // mapped tables.
@@ -199,9 +194,8 @@ func (m *DbMap) AddTableWithNameAndSchema(i interface{}, schema string, name str
 	return tmap
 }
 
-// AddTableWithNameAndSchema has the same behavior as AddTable, but sets
-// table.TableName to name.
-func (m *DbMap) RegisterModel(i interface{}) {
+// RegisterModelWithSchema , RegisterModel with schema name.
+func (m *DbMap) RegisterModelWithSchema(i interface{}, schema string) {
 	val := reflect.ValueOf(i)
 	typ := reflect.Indirect(val).Type()
 
@@ -228,13 +222,15 @@ func (m *DbMap) RegisterModel(i interface{}) {
 		}
 	}
 
-	tmap := &TableMap{gotype: typ, TableName: name, SchemaName: "", dbmap: m}
-	var primaryKey []*ColumnMap
-	tmap.Columns, primaryKey = m.readStructColumns(typ)
+	keys := getTableKeys(val)
+	tmap := m.initialTableMap(typ, name, schema, keys, m)
+
 	m.tables = append(m.tables, tmap)
-	if len(primaryKey) > 0 {
-		tmap.keys = append(tmap.keys, primaryKey...)
-	}
+
+}
+
+func (m *DbMap) RegisterModel(i interface{}) {
+	m.RegisterModelWithSchema(i, "")
 }
 
 // AddTableDynamic registers the given interface type with gorp.
@@ -264,6 +260,171 @@ func (m *DbMap) AddTableDynamic(inp DynamicTable, schema string) *TableMap {
 
 	m.dynamicTableAdd(name, tmap)
 
+	return tmap
+}
+
+func (m *DbMap) initialTableMap(t reflect.Type, table, schema string, keys []string, dmap *DbMap) *TableMap {
+
+	tmap := &TableMap{gotype: t, TableName: table, SchemaName: schema, dbmap: dmap}
+
+	tmap.FieldMap = make(map[string]*ColumnMap)
+	tmap.FieldLowMap = make(map[string]*ColumnMap)
+	tmap.ColumnMap = make(map[string]*ColumnMap)
+	tmap.ColumnLowMap = make(map[string]*ColumnMap)
+
+	var (
+		cols       []*ColumnMap
+		primaryKey []*ColumnMap
+	)
+
+	primaryKey = make([]*ColumnMap, 0)
+	n := t.NumField()
+	for i := 0; i < n; i++ {
+		f := t.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			// Recursively add nested fields in embedded structs.
+			subcols, subpk := m.readStructColumns(f.Type)
+			// Don't append nested fields that have the same field
+			// name as an already-mapped field.
+			for _, subcol := range subcols {
+				shouldAppend := true
+				for _, col := range cols {
+					if !subcol.Transient && subcol.fieldName == col.fieldName {
+						shouldAppend = false
+						break
+					}
+				}
+				if shouldAppend {
+					cols = append(cols, subcol)
+				}
+			}
+			if subpk != nil {
+				primaryKey = append(primaryKey, subpk...)
+			}
+		} else {
+			// Tag = Name { ','  Option }
+			// Option = OptionKey [ ':' OptionValue ]
+			cArguments := strings.Split(f.Tag.Get("orm"), ",")
+			columnName := cArguments[0]
+			var maxSize int
+			var defaultValue string
+			var isAuto bool
+			var isPK bool
+			var isNotNull bool
+			for _, argString := range cArguments[1:] {
+				argString = strings.TrimSpace(argString)
+				arg := strings.SplitN(argString, ":", 2)
+
+				// check mandatory/unexpected option values
+				switch arg[0] {
+				case "size", "default":
+					// options requiring value
+					if len(arg) == 1 {
+						panic(fmt.Sprintf("missing option value for option %v on field %v", arg[0], f.Name))
+					}
+				default:
+					// options where value is invalid (currently all other options)
+					if len(arg) == 2 {
+						panic(fmt.Sprintf("unexpected option value for option %v on field %v", arg[0], f.Name))
+					}
+				}
+
+				switch arg[0] {
+				case "size":
+					maxSize, _ = strconv.Atoi(arg[1])
+				case "default":
+					defaultValue = arg[1]
+				case "primarykey":
+					isPK = true
+				case "autoincrement":
+					isAuto = true
+				case "notnull":
+					isNotNull = true
+				default:
+					panic(fmt.Sprintf("Unrecognized tag option for field %v: %v", f.Name, arg))
+				}
+			}
+			if columnName == "" {
+				columnName = f.Name
+			}
+
+			gotype := f.Type
+			valueType := gotype
+			if valueType.Kind() == reflect.Ptr {
+				valueType = valueType.Elem()
+			}
+			value := reflect.New(valueType).Interface()
+			if m.TypeConverter != nil {
+				// Make a new pointer to a value of type gotype and
+				// pass it to the TypeConverter's FromDb method to see
+				// if a different type should be used for the column
+				// type during table creation.
+				scanner, useHolder := m.TypeConverter.FromDb(value)
+				if useHolder {
+					value = scanner.Holder
+					gotype = reflect.TypeOf(value)
+				}
+			}
+			if typer, ok := value.(SqlTyper); ok {
+				gotype = reflect.TypeOf(typer.SqlType())
+			} else if valuer, ok := value.(driver.Valuer); ok {
+				// Only check for driver.Valuer if SqlTyper wasn't
+				// found.
+				v, err := valuer.Value()
+				if err == nil && v != nil {
+					gotype = reflect.TypeOf(v)
+				}
+			}
+			cm := &ColumnMap{
+				ColumnName:   columnName,
+				DefaultValue: defaultValue,
+				Transient:    columnName == "-",
+				fieldName:    f.Name,
+				gotype:       gotype,
+				isPK:         isPK,
+				isAutoIncr:   isAuto,
+				isNotNull:    isNotNull,
+				MaxSize:      maxSize,
+			}
+
+			if isPK {
+				primaryKey = append(primaryKey, cm)
+			}
+			// Check for nested fields of the same field name and
+			// override them.
+			shouldAppend := true
+			for index, col := range cols {
+				if !col.Transient && col.fieldName == cm.fieldName {
+					cols[index] = cm
+					shouldAppend = false
+					break
+				}
+			}
+			if shouldAppend {
+				cols = append(cols, cm)
+			}
+
+			tmap.FieldMap[f.Name] = cm
+			tmap.FieldLowMap[strings.ToLower(f.Name)] = cm
+			tmap.ColumnMap[columnName] = cm
+			tmap.ColumnLowMap[strings.ToLower(columnName)] = cm
+
+		}
+
+	}
+
+	tmap.keys = primaryKey
+	tmap.Columns = cols
+
+	if keys != nil {
+		for key := range keys {
+			col := tmap.ColMap(keys[key])
+			if col != nil {
+				tmap.keys = append(tmap.keys, col)
+			}
+		}
+
+	}
 	return tmap
 }
 
@@ -714,6 +875,40 @@ func (m *DbMap) TableFor(t reflect.Type, checkPK bool) (*TableMap, error) {
 	return table, nil
 }
 
+func (m *DbMap) TableForName(tableName string, checkPK bool) (*TableMap, error) {
+
+	table := getTableByName(m, tableName)
+
+	if table == nil {
+		return nil, fmt.Errorf("no table found for type: %v", tableName)
+	}
+
+	if checkPK && len(table.keys) < 1 {
+		e := fmt.Sprintf("gorp: no keys defined for table: %s",
+			table.TableName)
+		return nil, errors.New(e)
+	}
+
+	return table, nil
+}
+
+func (m *DbMap) GetByFullName(tableName string, checkPK bool) (*TableMap, error) {
+
+	table := getTableByName(m, tableName)
+
+	if table == nil {
+		return nil, fmt.Errorf("no table found for type: %v", tableName)
+	}
+
+	if checkPK && len(table.keys) < 1 {
+		e := fmt.Sprintf("gorp: no keys defined for table: %s",
+			table.TableName)
+		return nil, errors.New(e)
+	}
+
+	return table, nil
+}
+
 // DynamicTableFor returns the *TableMap for the dynamic table corresponding
 // to the input tablename
 // If no table is mapped to that tablename an error is returned.
@@ -756,6 +951,24 @@ func tableOrNil(m *DbMap, t reflect.Type, name string) *TableMap {
 	for i := range m.tables {
 		table := m.tables[i]
 		if table.gotype == t {
+			return table
+		}
+	}
+	return nil
+}
+
+func getTableByName(m *DbMap, tableName string) *TableMap {
+	if tableName != "" {
+		// Search by table name (dynamic tables)
+		if table, found := m.dynamicTableFind(tableName); found {
+			return table
+		}
+		return nil
+	}
+
+	for i := range m.tables {
+		table := m.tables[i]
+		if table.TableName == tableName {
 			return table
 		}
 	}
@@ -810,30 +1023,4 @@ func (m *DbMap) trace(started time.Time, query string, args ...interface{}) {
 		var margs = argsString(args...)
 		m.logger.Printf("%s%s [%s] (%v)", m.logPrefix, query, margs, (time.Now().Sub(started)))
 	}
-}
-
-func (m *DbMap) Count(qs querySet) (int64, error) {
-
-	tables := newDbTables(mi, d.ins)
-	tables.parseRelated(qs.related, qs.relDepth)
-
-	where, args := tables.getCondSQL(cond, false, tz)
-	groupBy := tables.getGroupSQL(qs.groups)
-	tables.getOrderSQL(qs.orders)
-	join := tables.getJoinSQL()
-
-	Q := d.ins.TableQuote()
-
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s%s%s T0 %s%s%s", Q, mi.table, Q, join, where, groupBy)
-
-	if groupBy != "" {
-		query = fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS T", query)
-	}
-
-	d.ins.ReplaceMarks(&query)
-
-	row := q.QueryRow(query, args...)
-
-	err = row.Scan(&cnt)
-	return
 }

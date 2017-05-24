@@ -20,6 +20,16 @@ import (
 // Implementation of Dialect for Oracle databases.
 type OracleDialect struct{}
 
+// oracle operators.
+var oracleOperators = map[string]string{
+	"exact":       "= ?",
+	"gt":          "> ?",
+	"gte":         ">= ?",
+	"lt":          "< ?",
+	"lte":         "<= ?",
+	"//iendswith": "LIKE ?",
+}
+
 func (d OracleDialect) QuerySuffix() string { return "" }
 
 func (d OracleDialect) CreateIndexSuffix() string { return "" }
@@ -143,4 +153,9 @@ func (d OracleDialect) IfTableExists(command, schema, table string) string {
 
 func (d OracleDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
+}
+
+// OperatorSQL get oracle operator.
+func (d OracleDialect) OperatorSQL(operator string) string {
+	return oracleOperators[operator]
 }
