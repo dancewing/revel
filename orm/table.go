@@ -13,43 +13,116 @@ package orm
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
-	"time"
 )
 
-// TableMap represents a mapping between a Go struct and a database table
+var errSkipField = errors.New("skip field")
+
+// modelInfo represents a mapping between a Go struct and a database table
 // Use dbmap.AddTable() or dbmap.AddTableWithName() to create these
-type TableMap struct {
+type modelInfo struct {
 	// Name of database table.
-	TableName      string
-	SchemaName     string
-	gotype         reflect.Type
-	Columns        []*ColumnMap
-	keys           []*ColumnMap
+	//TableName  string
+	schemaName string
+	//FullName   string
+	gotype reflect.Type
+	//Columns        []*fieldInfo
+	//keys           []*fieldInfo
 	indexes        []*IndexMap
 	uniqueTogether [][]string
-	version        *ColumnMap
+	version        *fieldInfo
 	insertPlan     bindPlan
 	updatePlan     bindPlan
 	deletePlan     bindPlan
 	getPlan        bindPlan
-	dbmap          *DbMap
-	FieldMap       map[string]*ColumnMap // contains all column maps, includes keys
-	FieldLowMap    map[string]*ColumnMap
-	ColumnMap      map[string]*ColumnMap
-	ColumnLowMap   map[string]*ColumnMap
+
+	pkg       string
+	name      string
+	fullName  string
+	table     string
+	model     interface{}
+	fields    *fields
+	manual    bool          // true, model created by code, false for many-to-many tables
+	addrField reflect.Value //store the original struct value
+	uniques   []string
+	isThrough bool
 }
 
-func (t *TableMap) String() string {
-	return fmt.Sprintf("%v", t)
+// new model info
+func newModelInfo(val reflect.Value) (mi *modelInfo) {
+	mi = &modelInfo{}
+	mi.fields = newFields()
+	ind := reflect.Indirect(val)
+	mi.addrField = val
+	mi.name = ind.Type().Name()
+	mi.fullName = getFullName(ind.Type())
+	addModelFields(mi, ind, "", []int{})
+	return
+}
+
+// index: FieldByIndex returns the nested field corresponding to index
+func addModelFields(mi *modelInfo, ind reflect.Value, mName string, index []int) {
+	var (
+		err error
+		fi  *fieldInfo
+		sf  reflect.StructField
+	)
+
+	for i := 0; i < ind.NumField(); i++ {
+		field := ind.Field(i)
+		sf = ind.Type().Field(i)
+		// if the field is unexported skip
+		if sf.PkgPath != "" {
+			continue
+		}
+		// add anonymous struct fields
+		if sf.Anonymous {
+			addModelFields(mi, field, mName+"."+sf.Name, append(index, i))
+			continue
+		}
+
+		fi, err = newFieldInfo(mi, field, sf, mName)
+		if err == errSkipField {
+			err = nil
+			continue
+		} else if err != nil {
+			break
+		}
+		//record current field index
+		fi.fieldIndex = append(index, i)
+		fi.mi = mi
+		fi.gotype = field.Type()
+		fi.inModel = true
+		if !mi.fields.Add(fi) {
+			err = fmt.Errorf("duplicate column name: %s", fi.column)
+			break
+		}
+		if fi.pk {
+			// if mi.fields.pk != nil {
+			// 	err = fmt.Errorf("one model must have one pk field only")
+			// 	break
+			// } else {
+			// 	mi.fields.pk = fi
+			// }
+
+			mi.fields.keys[fi.name] = fi
+		}
+	}
+
+	if err != nil {
+		fmt.Println(fmt.Errorf("field: %s.%s, %s", ind.Type(), sf.Name, err))
+		os.Exit(2)
+	}
 }
 
 // ResetSql removes cached insert/update/select/delete SQL strings
-// associated with this TableMap.  Call this if you've modified
+// associated with this modelInfo.  Call this if you've modified
 // any column names or the table name itself.
-func (t *TableMap) ResetSql() {
+func (t *modelInfo) ResetSql() {
 	t.insertPlan = bindPlan{}
 	t.updatePlan = bindPlan{}
 	t.deletePlan = bindPlan{}
@@ -64,18 +137,18 @@ func (t *TableMap) ResetSql() {
 //
 // Panics if isAutoIncr is true, and fieldNames length != 1
 //
-func (t *TableMap) SetKeys(isAutoIncr bool, fieldNames ...string) *TableMap {
+func (t *modelInfo) SetKeys(isAutoIncr bool, fieldNames ...string) *modelInfo {
 	if isAutoIncr && len(fieldNames) != 1 {
 		panic(fmt.Sprintf(
 			"gorp: SetKeys: fieldNames length must be 1 if key is auto-increment. (Saw %v fieldNames)",
 			len(fieldNames)))
 	}
-	t.keys = make([]*ColumnMap, 0)
+	// t.keys = make([]*fieldInfo, 0)
 	for _, name := range fieldNames {
 		colmap := t.ColMap(name)
-		colmap.isPK = true
-		colmap.isAutoIncr = isAutoIncr
-		t.keys = append(t.keys, colmap)
+		colmap.pk = true
+		colmap.auto = isAutoIncr
+		t.fields.keys[name] = colmap
 	}
 	t.ResetSql()
 
@@ -90,7 +163,7 @@ func (t *TableMap) SetKeys(isAutoIncr bool, fieldNames ...string) *TableMap {
 //
 // Panics if fieldNames length < 2.
 //
-func (t *TableMap) SetUniqueTogether(fieldNames ...string) *TableMap {
+func (t *modelInfo) SetUniqueTogether(fieldNames ...string) *modelInfo {
 	if len(fieldNames) < 2 {
 		panic(fmt.Sprintf(
 			"gorp: SetUniqueTogether: must provide at least two fieldNames to set uniqueness constraint."))
@@ -106,40 +179,40 @@ func (t *TableMap) SetUniqueTogether(fieldNames ...string) *TableMap {
 	return t
 }
 
-// ColMap returns the ColumnMap pointer matching the given struct field
+// ColMap returns the fieldInfo pointer matching the given struct field
 // name.  It panics if the struct does not contain a field matching this
 // name.
-func (t *TableMap) ColMap(field string) *ColumnMap {
+func (t *modelInfo) ColMap(field string) *fieldInfo {
 	col := colMapOrNil(t, field)
 	if col == nil {
-		e := fmt.Sprintf("No ColumnMap in table %s type %s with field %s",
-			t.TableName, t.gotype.Name(), field)
+		e := fmt.Sprintf("No fieldInfo in table %s type %s with field %s",
+			t.table, t.gotype.Name(), field)
 
 		panic(e)
 	}
 	return col
 }
 
-// GetByAny return ColumnMap
-func (t *TableMap) GetByAny(name string) (*ColumnMap, bool) {
-	if fi, ok := t.FieldMap[name]; ok {
+// GetByAny return fieldInfo
+func (t *modelInfo) GetByAny(name string) (*fieldInfo, bool) {
+	if fi, ok := t.fields.fields[name]; ok {
 		return fi, ok
 	}
-	if fi, ok := t.FieldLowMap[strings.ToLower(name)]; ok {
+	if fi, ok := t.fields.fieldsLow[strings.ToLower(name)]; ok {
 		return fi, ok
 	}
-	if fi, ok := t.ColumnMap[name]; ok {
-		return fi, ok
-	}
-	if fi, ok := t.ColumnLowMap[name]; ok {
-		return fi, ok
-	}
+	// if fi, ok := t.fieldInfo[name]; ok {
+	// 	return fi, ok
+	// }
+	// if fi, ok := t.ColumnLowMap[name]; ok {
+	// 	return fi, ok
+	// }
 	return nil, false
 }
 
-func colMapOrNil(t *TableMap, field string) *ColumnMap {
-	for _, col := range t.Columns {
-		if col.fieldName == field || col.ColumnName == field {
+func colMapOrNil(t *modelInfo, field string) *fieldInfo {
+	for _, col := range t.fields.columns {
+		if col.name == field || col.column == field {
 			return col
 		}
 	}
@@ -147,7 +220,7 @@ func colMapOrNil(t *TableMap, field string) *ColumnMap {
 }
 
 // IdxMap returns the IndexMap pointer matching the given index name.
-func (t *TableMap) IdxMap(field string) *IndexMap {
+func (t *modelInfo) IdxMap(field string) *IndexMap {
 	for _, idx := range t.indexes {
 		if idx.IndexName == field {
 			return idx
@@ -163,7 +236,7 @@ func (t *TableMap) IdxMap(field string) *IndexMap {
 //
 // Automatically calls ResetSql() to ensure SQL statements are regenerated.
 //
-func (t *TableMap) AddIndex(name string, idxtype string, columns []string) *IndexMap {
+func (t *modelInfo) AddIndex(name string, idxtype string, columns []string) *IndexMap {
 	// check if we have a index with this name already
 	for _, idx := range t.indexes {
 		if idx.IndexName == name {
@@ -172,7 +245,7 @@ func (t *TableMap) AddIndex(name string, idxtype string, columns []string) *Inde
 	}
 	for _, icol := range columns {
 		if res := t.ColMap(icol); res == nil {
-			e := fmt.Sprintf("No ColumnName in table %s to create index on", t.TableName)
+			e := fmt.Sprintf("No ColumnName in table %s to create index on", t.table)
 			panic(e)
 		}
 	}
@@ -188,7 +261,7 @@ func (t *TableMap) AddIndex(name string, idxtype string, columns []string) *Inde
 // if the struct does not contain a field matching this name.
 //
 // Automatically calls ResetSql() to ensure SQL statements are regenerated.
-func (t *TableMap) SetVersionCol(field string) *ColumnMap {
+func (t *modelInfo) SetVersionCol(field string) *fieldInfo {
 	c := t.ColMap(field)
 	t.version = c
 	t.ResetSql()
@@ -197,60 +270,83 @@ func (t *TableMap) SetVersionCol(field string) *ColumnMap {
 
 // SqlForCreateTable gets a sequence of SQL commands that will create
 // the specified table and any associated schema
-func (t *TableMap) SqlForCreate(ifNotExists bool) string {
-	s := bytes.Buffer{}
-	dialect := t.dbmap.Dialect
+func (t *modelInfo) SqlForCreate(ifNotExists bool) string {
 
-	if strings.TrimSpace(t.SchemaName) != "" {
+	fmt.Println("creating table : ", t.table)
+
+	s := bytes.Buffer{}
+	dialect := Database().Get().Dialect
+
+	if strings.TrimSpace(t.schemaName) != "" {
 		schemaCreate := "create schema"
 		if ifNotExists {
-			s.WriteString(dialect.IfSchemaNotExists(schemaCreate, t.SchemaName))
+			s.WriteString(dialect.IfSchemaNotExists(schemaCreate, t.schemaName))
 		} else {
 			s.WriteString(schemaCreate)
 		}
-		s.WriteString(fmt.Sprintf(" %s;", t.SchemaName))
+		s.WriteString(fmt.Sprintf(" %s;", t.schemaName))
 	}
 
 	tableCreate := "create table"
 	if ifNotExists {
-		s.WriteString(dialect.IfTableNotExists(tableCreate, t.SchemaName, t.TableName))
+		s.WriteString(dialect.IfTableNotExists(tableCreate, t.schemaName, t.table))
 	} else {
 		s.WriteString(tableCreate)
 	}
-	s.WriteString(fmt.Sprintf(" %s (", dialect.QuotedTableForQuery(t.SchemaName, t.TableName)))
+	s.WriteString(fmt.Sprintf(" %s (", dialect.QuotedTableForQuery(t.schemaName, t.table)))
 
 	x := 0
-	for _, col := range t.Columns {
-		if !col.Transient {
-			if x > 0 {
-				s.WriteString(", ")
-			}
-			stype := dialect.ToSqlType(col.gotype, col.MaxSize, col.isAutoIncr)
-			s.WriteString(fmt.Sprintf("%s %s", dialect.QuoteField(col.ColumnName), stype))
+	for _, col := range t.fields.columns {
 
-			if col.isPK || col.isNotNull {
-				s.WriteString(" not null")
-			}
-			if col.isPK && len(t.keys) == 1 {
-				s.WriteString(" primary key")
-			}
-			if col.Unique {
-				s.WriteString(" unique")
-			}
-			if col.isAutoIncr {
-				s.WriteString(fmt.Sprintf(" %s", dialect.AutoIncrStr()))
-			}
+		fmt.Println(fmt.Sprintf("check field : %s, fieldType: %s ", col.name, col.fieldType))
 
-			x++
+		if col.transient || col.fieldType == RelManyToMany || col.fieldType == RelReverseMany {
+			continue
 		}
+
+		if x > 0 {
+			s.WriteString(", ")
+		}
+
+		// var stype string
+
+		// if col.rel && (col.fieldType == RelForeignKey || col.fieldType == RelOneToOne) {
+		// 	//stype = dialect.ToSqlType(col.gotype, col.size, col.isAutoIncr)
+		// 	stype = dialect.ToSqlType(col.reverseFieldInfo.gotype, col.reverseFieldInfo.size, false)
+		// } else {
+		// 	stype = dialect.ToSqlType(col.gotype, col.size, col.auto)
+		// }
+
+		stype := dialect.ToSqlType(col.gotype, col.size, col.auto)
+
+		s.WriteString(fmt.Sprintf("%s %s", dialect.QuoteField(col.column), stype))
+
+		if col.pk || col.isNotNull {
+			s.WriteString(" not null")
+		}
+		if col.pk && len(t.fields.keys) == 1 {
+			s.WriteString(" primary key")
+		}
+		if col.unique {
+			s.WriteString(" unique")
+		}
+		if col.auto {
+			s.WriteString(fmt.Sprintf(" %s", dialect.AutoIncrStr()))
+		}
+
+		x++
+
 	}
-	if len(t.keys) > 1 {
+	if len(t.fields.keys) > 1 {
 		s.WriteString(", primary key (")
-		for x := range t.keys {
-			if x > 0 {
+
+		var index = 0
+		for _, f := range t.fields.keys {
+			if index > 0 {
 				s.WriteString(", ")
 			}
-			s.WriteString(dialect.QuoteField(t.keys[x].ColumnName))
+			s.WriteString(dialect.QuoteField(f.column))
+			index++
 		}
 		s.WriteString(")")
 	}
@@ -273,7 +369,7 @@ func (t *TableMap) SqlForCreate(ifNotExists bool) string {
 }
 
 // parse orm model struct field tag expression.
-func (t *TableMap) parseExprs(exprs []string) (index, name string, info *ColumnMap, success bool) {
+func (t *modelInfo) parseExprs(exprs []string) (index, name string, info *fieldInfo, success bool) {
 
 	index = ""
 	name = ""
@@ -296,237 +392,405 @@ func (t *TableMap) parseExprs(exprs []string) (index, name string, info *ColumnM
 	return
 }
 
-// generate condition sql.
-func (t *TableMap) getCondSQL(cond *Condition, sub bool, tz *time.Location) (where string, params []interface{}) {
-	if cond == nil || cond.IsEmpty() {
-		return
-	}
+// new field info
+func newFieldInfo(mi *modelInfo, field reflect.Value, sf reflect.StructField, mName string) (fi *fieldInfo, err error) {
+	var (
+		tag       string
+		tagValue  string
+		initial   StrTo // store the default value
+		fieldType int
+		attrs     map[string]bool
+		tags      map[string]string
+		addrField reflect.Value
+	)
 
-	//Q := t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)
+	fi = new(fieldInfo)
 
-	for i, p := range cond.params {
-		if i > 0 {
-			if p.isOr {
-				where += "OR "
-			} else {
-				where += "AND "
+	// if field which CanAddr is the follow type
+	//  A value is addressable if it is an element of a slice,
+	//  an element of an addressable array, a field of an
+	//  addressable struct, or the result of dereferencing a pointer.
+	addrField = field
+	if field.CanAddr() && field.Kind() != reflect.Ptr {
+		addrField = field.Addr()
+		if _, ok := addrField.Interface().(Fielder); !ok {
+			if field.Kind() == reflect.Slice {
+				addrField = field
 			}
 		}
-		if p.isNot {
-			where += "NOT "
-		}
-		if p.isCond {
-			w, ps := t.getCondSQL(p.cond, true, tz)
-			if w != "" {
-				w = fmt.Sprintf("( %s) ", w)
-			}
-			where += w
-			params = append(params, ps...)
-		} else {
-			exprs := p.exprs
-
-			fmt.Println("exprs :", exprs)
-
-			num := len(exprs) - 1
-			operator := ""
-			if operators[exprs[num]] {
-				operator = exprs[num]
-				exprs = exprs[:num]
-			}
-
-			_, _, fi, suc := t.parseExprs(exprs)
-			if !suc {
-				panic(fmt.Errorf("unknown field/column name `%s`", strings.Join(p.exprs, ExprSep)))
-			}
-
-			if operator == "" {
-				operator = "exact"
-			}
-
-			operSQL, args := t.GenerateOperatorSQL(fi, operator, p.args, tz)
-
-			leftCol := fmt.Sprintf("%s", fi.ColumnName)
-
-			t.GenerateOperatorLeftCol(fi, operator, &leftCol)
-
-			where += fmt.Sprintf("%s %s ", leftCol, operSQL)
-			params = append(params, args...)
-
-		}
 	}
 
-	if !sub && where != "" {
-		where = "WHERE " + where
+	attrs, tags = parseStructTag(sf.Tag.Get(defaultStructTagName))
+
+	if _, ok := attrs["-"]; ok {
+		return nil, errSkipField
 	}
 
-	return
-}
+	digits := tags["digits"]
+	decimals := tags["decimals"]
+	size := tags["size"]
+	onDelete := tags["on_delete"]
 
-// generate group sql.
-func (t *TableMap) getGroupSQL(groups []string) (groupSQL string) {
-	if len(groups) == 0 {
-		return
+	initial.Clear()
+	if v, ok := tags["default"]; ok {
+		initial.Set(v)
 	}
 
-	Q := t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)
-
-	groupSqls := make([]string, 0, len(groups))
-	for _, group := range groups {
-		exprs := strings.Split(group, ExprSep)
-
-		index, _, fi, suc := t.parseExprs(exprs)
-		if !suc {
-			panic(fmt.Errorf("unknown field/column name `%s`", strings.Join(exprs, ExprSep)))
+checkType:
+	switch f := addrField.Interface().(type) {
+	case Fielder:
+		fi.isFielder = true
+		if field.Kind() == reflect.Ptr {
+			err = fmt.Errorf("the model Fielder can not be use ptr")
+			goto end
 		}
-
-		groupSqls = append(groupSqls, fmt.Sprintf("%s.%s%s%s", index, Q, fi.ColumnName, Q))
-	}
-
-	groupSQL = fmt.Sprintf("GROUP BY %s ", strings.Join(groupSqls, ", "))
-	return
-}
-
-// generate order sql.
-func (t *TableMap) getOrderSQL(orders []string) (orderSQL string) {
-	if len(orders) == 0 {
-		return
-	}
-
-	Q := t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)
-
-	orderSqls := make([]string, 0, len(orders))
-	for _, order := range orders {
-		asc := "ASC"
-		if order[0] == '-' {
-			asc = "DESC"
-			order = order[1:]
+		fieldType = f.FieldType()
+		if fieldType&IsRelField > 0 {
+			err = fmt.Errorf("unsupport type custom field, please refer to https://github.com/astaxie/beego/blob/master/orm/models_fields.go#L24-L42")
+			goto end
 		}
-		exprs := strings.Split(order, ExprSep)
-
-		index, _, fi, suc := t.parseExprs(exprs)
-		if !suc {
-			panic(fmt.Errorf("unknown field/column name `%s`", strings.Join(exprs, ExprSep)))
-		}
-
-		orderSqls = append(orderSqls, fmt.Sprintf("%s.%s%s%s %s", index, Q, fi.ColumnName, Q, asc))
-	}
-
-	orderSQL = fmt.Sprintf("ORDER BY %s ", strings.Join(orderSqls, ", "))
-	return
-}
-
-// generate join string.
-func (t *TableMap) getJoinSQL() (join string) {
-
-	//Q := t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)
-
-	join = ""
-	//
-	//for _, jt := range t.tables {
-	//	if jt.inner {
-	//		join += "INNER JOIN "
-	//	} else {
-	//		join += "LEFT OUTER JOIN "
-	//	}
-	//	var (
-	//		table  string
-	//		t1, t2 string
-	//		c1, c2 string
-	//	)
-	//	t1 = "T0"
-	//	if jt.jtl != nil {
-	//		t1 = jt.jtl.index
-	//	}
-	//	t2 = jt.index
-	//	table = jt.mi.table
-	//
-	//	switch {
-	//	case jt.fi.fieldType == RelManyToMany || jt.fi.fieldType == RelReverseMany || jt.fi.reverse && jt.fi.reverseFieldInfo.fieldType == RelManyToMany:
-	//		c1 = jt.fi.mi.fields.pk.column
-	//		for _, ffi := range jt.mi.fields.fieldsRel {
-	//			if jt.fi.mi == ffi.relModelInfo {
-	//				c2 = ffi.column
-	//				break
-	//			}
-	//		}
-	//	default:
-	//		c1 = jt.fi.column
-	//		c2 = jt.fi.relModelInfo.fields.pk.column
-	//
-	//		if jt.fi.reverse {
-	//			c1 = jt.mi.fields.pk.column
-	//			c2 = jt.fi.reverseFieldInfo.column
-	//		}
-	//	}
-	//
-	//	join += fmt.Sprintf("%s%s%s %s ON %s.%s%s%s = %s.%s%s%s ", Q, table, Q, t2,
-	//		t2, Q, c2, Q, t1, Q, c1, Q)
-	//}
-	return
-}
-
-// generate sql with replacing operator string placeholders and replaced values.
-func (d *TableMap) GenerateOperatorSQL(fi *ColumnMap, operator string, args []interface{}, tz *time.Location) (string, []interface{}) {
-	var sql string
-
-	params := getFlatParams(fi, args, tz)
-
-	if len(params) == 0 {
-		panic(fmt.Errorf("operator `%s` need at least one args", operator))
-	}
-	arg := params[0]
-
-	switch operator {
-	case "in":
-		marks := make([]string, len(params))
-		for i := range marks {
-			marks[i] = "?"
-		}
-		sql = fmt.Sprintf("IN (%s)", strings.Join(marks, ", "))
-	case "between":
-		if len(params) != 2 {
-			panic(fmt.Errorf("operator `%s` need 2 args not %d", operator, len(params)))
-		}
-		sql = "BETWEEN ? AND ?"
 	default:
-		if len(params) > 1 {
-			panic(fmt.Errorf("operator `%s` need 1 args not %d", operator, len(params)))
-		}
-		sql = d.dbmap.Dialect.OperatorSQL(operator)
-		switch operator {
-		case "exact":
-			if arg == nil {
-				params[0] = "IS NULL"
-			}
-		case "iexact", "contains", "icontains", "startswith", "endswith", "istartswith", "iendswith":
-			param := strings.Replace(ToStr(arg), `%`, `\%`, -1)
-			switch operator {
-			case "iexact":
-			case "contains", "icontains":
-				param = fmt.Sprintf("%%%s%%", param)
-			case "startswith", "istartswith":
-				param = fmt.Sprintf("%s%%", param)
-			case "endswith", "iendswith":
-				param = fmt.Sprintf("%%%s", param)
-			}
-			params[0] = param
-		case "isnull":
-			if b, ok := arg.(bool); ok {
-				if b {
-					sql = "IS NULL"
-				} else {
-					sql = "IS NOT NULL"
+		tag = "rel"
+		tagValue = tags[tag]
+		if tagValue != "" {
+			switch tagValue {
+			case "fk":
+				fieldType = RelForeignKey
+				break checkType
+			case "one":
+				fieldType = RelOneToOne
+				break checkType
+			case "m2m":
+				fieldType = RelManyToMany
+				if tv := tags["rel_table"]; tv != "" {
+					fi.relTable = tv
+				} else if tv := tags["rel_through"]; tv != "" {
+					fi.relThrough = tv
 				}
-				params = nil
-			} else {
-				panic(fmt.Errorf("operator `%s` need a bool value not `%T`", operator, arg))
+				break checkType
+			default:
+				err = fmt.Errorf("rel only allow these value: fk, one, m2m")
+				goto wrongTag
+			}
+		}
+		tag = "reverse"
+		tagValue = tags[tag]
+		if tagValue != "" {
+			switch tagValue {
+			case "one":
+				fieldType = RelReverseOne
+				break checkType
+			case "many":
+				fieldType = RelReverseMany
+				if tv := tags["rel_table"]; tv != "" {
+					fi.relTable = tv
+				} else if tv := tags["rel_through"]; tv != "" {
+					fi.relThrough = tv
+				}
+				break checkType
+			default:
+				err = fmt.Errorf("reverse only allow these value: one, many")
+				goto wrongTag
+			}
+		}
+
+		fieldType, err = getFieldType(addrField)
+		if err != nil {
+			goto end
+		}
+		if fieldType == TypeCharField {
+			switch tags["type"] {
+			case "text":
+				fieldType = TypeTextField
+			case "json":
+				fieldType = TypeJSONField
+			case "jsonb":
+				fieldType = TypeJsonbField
+			}
+		}
+		if fieldType == TypeFloatField && (digits != "" || decimals != "") {
+			fieldType = TypeDecimalField
+		}
+		if fieldType == TypeDateTimeField && tags["type"] == "date" {
+			fieldType = TypeDateField
+		}
+		if fieldType == TypeTimeField && tags["type"] == "time" {
+			fieldType = TypeTimeField
+		}
+	}
+
+	// check the rel and reverse type
+	// rel should Ptr
+	// reverse should slice []*struct
+	switch fieldType {
+	case RelForeignKey, RelOneToOne, RelReverseOne:
+		if field.Kind() != reflect.Ptr {
+			err = fmt.Errorf("rel/reverse:one field must be *%s", field.Type().Name())
+			goto end
+		}
+	case RelManyToMany, RelReverseMany:
+		if field.Kind() != reflect.Slice {
+			err = fmt.Errorf("rel/reverse:many field must be slice")
+			goto end
+		} else {
+			if field.Type().Elem().Kind() != reflect.Ptr {
+				err = fmt.Errorf("rel/reverse:many slice must be []*%s", field.Type().Elem().Name())
+				goto end
 			}
 		}
 	}
-	return sql, params
+
+	if fieldType&IsFieldType == 0 {
+		err = fmt.Errorf("wrong field type")
+		goto end
+	}
+
+	fi.fieldType = fieldType
+	fi.name = sf.Name
+	fi.column = getColumnName(fieldType, addrField, sf, tags["column"])
+	fi.addrValue = addrField
+	fi.sf = sf
+	fi.fullName = mi.fullName + mName + "." + sf.Name
+
+	fi.null = attrs["null"]
+	fi.index = attrs["index"]
+	fi.auto = attrs["auto"]
+	fi.pk = attrs["pk"]
+	fi.unique = attrs["unique"]
+
+	// Mark object property if there is attribute "default" in the orm configuration
+	if _, ok := tags["default"]; ok {
+		fi.colDefault = true
+	}
+
+	switch fieldType {
+	case RelManyToMany, RelReverseMany, RelReverseOne:
+		fi.null = false
+		fi.index = false
+		fi.auto = false
+		fi.pk = false
+		fi.unique = false
+	default:
+		fi.dbcol = true
+	}
+
+	switch fieldType {
+	case RelForeignKey, RelOneToOne, RelManyToMany:
+		fi.rel = true
+		if fieldType == RelOneToOne {
+			fi.unique = true
+		}
+	case RelReverseMany, RelReverseOne:
+		fi.reverse = true
+	}
+
+	if fi.rel && fi.dbcol {
+		switch onDelete {
+		case odCascade, odDoNothing:
+		case odSetDefault:
+			if !initial.Exist() {
+				err = errors.New("on_delete: set_default need set field a default value")
+				goto end
+			}
+		case odSetNULL:
+			if !fi.null {
+				err = errors.New("on_delete: set_null need set field null")
+				goto end
+			}
+		default:
+			if onDelete == "" {
+				onDelete = odCascade
+			} else {
+				err = fmt.Errorf("on_delete value expected choice in `cascade,set_null,set_default,do_nothing`, unknown `%s`", onDelete)
+				goto end
+			}
+		}
+
+		fi.onDelete = onDelete
+	}
+
+	switch fieldType {
+	case TypeBooleanField:
+	case TypeCharField, TypeJSONField, TypeJsonbField:
+		if size != "" {
+			v, e := StrTo(size).Int32()
+			if e != nil {
+				err = fmt.Errorf("wrong size value `%s`", size)
+			} else {
+				fi.size = int(v)
+			}
+		} else {
+			fi.size = 255
+			fi.toText = true
+		}
+	case TypeTextField:
+		fi.index = false
+		fi.unique = false
+	case TypeTimeField, TypeDateField, TypeDateTimeField:
+		if attrs["auto_now"] {
+			fi.autoNow = true
+		} else if attrs["auto_now_add"] {
+			fi.autoNowAdd = true
+		}
+	case TypeFloatField:
+	case TypeDecimalField:
+		d1 := digits
+		d2 := decimals
+		v1, er1 := StrTo(d1).Int8()
+		v2, er2 := StrTo(d2).Int8()
+		if er1 != nil || er2 != nil {
+			err = fmt.Errorf("wrong digits/decimals value %s/%s", d2, d1)
+			goto end
+		}
+		fi.digits = int(v1)
+		fi.decimals = int(v2)
+	default:
+		switch {
+		case fieldType&IsIntegerField > 0:
+		case fieldType&IsRelField > 0:
+		}
+	}
+
+	if fieldType&IsIntegerField == 0 {
+		if fi.auto {
+			err = fmt.Errorf("non-integer type cannot set auto")
+			goto end
+		}
+	}
+
+	if fi.auto || fi.pk {
+		if fi.auto {
+			switch addrField.Elem().Kind() {
+			case reflect.Int, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint32, reflect.Uint64:
+			default:
+				err = fmt.Errorf("auto primary key only support int, int32, int64, uint, uint32, uint64 but found `%s`", addrField.Elem().Kind())
+				goto end
+			}
+			fi.pk = true
+		}
+		fi.null = false
+		fi.index = false
+		fi.unique = false
+	}
+
+	if fi.unique {
+		fi.index = false
+	}
+
+	// can not set default for these type
+	if fi.auto || fi.pk || fi.unique || fieldType == TypeTimeField || fieldType == TypeDateField || fieldType == TypeDateTimeField {
+		initial.Clear()
+	}
+
+	if initial.Exist() {
+		v := initial
+		switch fieldType {
+		case TypeBooleanField:
+			_, err = v.Bool()
+		case TypeFloatField, TypeDecimalField:
+			_, err = v.Float64()
+		case TypeBitField:
+			_, err = v.Int8()
+		case TypeSmallIntegerField:
+			_, err = v.Int16()
+		case TypeIntegerField:
+			_, err = v.Int32()
+		case TypeBigIntegerField:
+			_, err = v.Int64()
+		case TypePositiveBitField:
+			_, err = v.Uint8()
+		case TypePositiveSmallIntegerField:
+			_, err = v.Uint16()
+		case TypePositiveIntegerField:
+			_, err = v.Uint32()
+		case TypePositiveBigIntegerField:
+			_, err = v.Uint64()
+		}
+		if err != nil {
+			tag, tagValue = "default", tags["default"]
+			goto wrongTag
+		}
+	}
+
+	fi.initial = initial
+end:
+	if err != nil {
+		return nil, err
+	}
+	return
+wrongTag:
+	return nil, fmt.Errorf("wrong tag format: `%s:\"%s\"`, %s", tag, tagValue, err)
 }
 
-// gernerate sql string with inner function, such as UPPER(text).
-func (d *TableMap) GenerateOperatorLeftCol(*ColumnMap, string, *string) {
-	// default not use
+// combine related model info to new model info.
+// prepare for relation models query.
+func newM2MModelInfo(m1, m2 *modelInfo) (mi *modelInfo) {
+
+	if len(m1.fields.keys) != 1 || len(m2.fields.keys) != 1 {
+		panic(fmt.Errorf("Many-to-Many Models (%s,%s) must have one key", m1.table, m2.table))
+	}
+
+	var (
+		m1key, m2key *fieldInfo
+		i            int
+	)
+	i = 0
+	for _, f := range m1.fields.keys {
+		if i == 0 {
+			m1key = f
+		}
+		i++
+	}
+	i = 0
+	for _, f := range m2.fields.keys {
+		if i == 0 {
+			m2key = f
+		}
+		i++
+	}
+
+	mi = new(modelInfo)
+
+	mi.manual = false
+
+	mi.fields = newFields()
+	mi.table = m1.table + "_" + m2.table
+	mi.name = camelString(mi.table)
+	mi.fullName = m1.pkg + "." + mi.name
+
+	//	fa := new(fieldInfo) // pk
+	f1 := new(fieldInfo) // m1 table RelForeignKey
+	f2 := new(fieldInfo) // m2 table RelForeignKey
+
+	f1.dbcol = true
+	f2.dbcol = true
+
+	f1.gotype = m1key.gotype
+	f2.gotype = m2key.gotype
+
+	f1.fieldType = RelForeignKey
+	f2.fieldType = RelForeignKey
+	f1.name = camelString(m1.table)
+	f2.name = camelString(m2.table)
+	f1.fullName = mi.fullName + "." + f1.name
+	f2.fullName = mi.fullName + "." + f2.name
+	f1.column = m1.table + "_id"
+	f2.column = m2.table + "_id"
+	f1.rel = true
+	f2.rel = true
+	f1.relTable = m1.table
+	f2.relTable = m2.table
+	f1.relModelInfo = m1
+	f2.relModelInfo = m2
+	f1.mi = mi
+	f2.mi = mi
+
+	mi.fields.Add(f1)
+	mi.fields.Add(f2)
+
+	mi.fields.keys[f1.name] = f1
+	mi.fields.keys[f2.name] = f2
+
+	mi.uniques = []string{f1.column, f2.column}
+	return
 }

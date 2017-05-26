@@ -34,7 +34,7 @@ type Dialect interface {
 	// remove reference to those columns in the INSERT statement.
 	AutoIncrBindValue() string
 
-	AutoIncrInsertSuffix(col *ColumnMap) string
+	AutoIncrInsertSuffix(col *fieldInfo) string
 
 	// string to append to "create table" statement for vendor specific
 	// table attributes
@@ -71,9 +71,6 @@ type Dialect interface {
 	IfSchemaNotExists(command, schema string) string
 	IfTableExists(command, schema, table string) string
 	IfTableNotExists(command, schema, table string) string
-
-	//Operator for SQL
-	OperatorSQL(operator string) string
 }
 
 // IntegerAutoIncrInserter is implemented by dialects that can perform

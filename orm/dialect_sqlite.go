@@ -20,23 +20,7 @@ type SqliteDialect struct {
 	suffix string
 }
 
-// sqlite operators.
-var sqliteOperators = map[string]string{
-	"exact":       "= ?",
-	"iexact":      "LIKE ? ESCAPE '\\'",
-	"contains":    "LIKE ? ESCAPE '\\'",
-	"icontains":   "LIKE ? ESCAPE '\\'",
-	"gt":          "> ?",
-	"gte":         ">= ?",
-	"lt":          "< ?",
-	"lte":         "<= ?",
-	"eq":          "= ?",
-	"ne":          "!= ?",
-	"startswith":  "LIKE ? ESCAPE '\\'",
-	"endswith":    "LIKE ? ESCAPE '\\'",
-	"istartswith": "LIKE ? ESCAPE '\\'",
-	"iendswith":   "LIKE ? ESCAPE '\\'",
-}
+var _ Dialect = new(SqliteDialect)
 
 func (d SqliteDialect) QuerySuffix() string { return ";" }
 
@@ -82,7 +66,7 @@ func (d SqliteDialect) AutoIncrBindValue() string {
 	return "null"
 }
 
-func (d SqliteDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
+func (d SqliteDialect) AutoIncrInsertSuffix(col *fieldInfo) string {
 	return ""
 }
 
@@ -134,9 +118,4 @@ func (d SqliteDialect) IfTableExists(command, schema, table string) string {
 
 func (d SqliteDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
-}
-
-// get sqlite operator.
-func (d SqliteDialect) OperatorSQL(operator string) string {
-	return sqliteOperators[operator]
 }

@@ -21,23 +21,7 @@ type PostgresDialect struct {
 	suffix string
 }
 
-// postgresql operators.
-var postgresOperators = map[string]string{
-	"exact":       "= ?",
-	"iexact":      "= UPPER(?)",
-	"contains":    "LIKE ?",
-	"icontains":   "LIKE UPPER(?)",
-	"gt":          "> ?",
-	"gte":         ">= ?",
-	"lt":          "< ?",
-	"lte":         "<= ?",
-	"eq":          "= ?",
-	"ne":          "!= ?",
-	"startswith":  "LIKE ?",
-	"endswith":    "LIKE ?",
-	"istartswith": "LIKE UPPER(?)",
-	"iendswith":   "LIKE UPPER(?)",
-}
+var _ Dialect = new(PostgresDialect)
 
 func (d PostgresDialect) QuerySuffix() string { return ";" }
 
@@ -95,8 +79,8 @@ func (d PostgresDialect) AutoIncrBindValue() string {
 	return "default"
 }
 
-func (d PostgresDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
-	return " returning " + d.QuoteField(col.ColumnName)
+func (d PostgresDialect) AutoIncrInsertSuffix(col *fieldInfo) string {
+	return " returning " + d.QuoteField(col.column)
 }
 
 // Returns suffix
@@ -162,9 +146,4 @@ func (d PostgresDialect) IfTableExists(command, schema, table string) string {
 
 func (d PostgresDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
-}
-
-// get postgresql operator.
-func (d PostgresDialect) OperatorSQL(operator string) string {
-	return postgresOperators[operator]
 }

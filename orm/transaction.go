@@ -194,10 +194,8 @@ func (t *Transaction) Query(query string, args ...interface{}) (*sql.Rows, error
 	return t.tx.Query(query, args...)
 }
 
-// return a QuerySeter for table operations.
-// table name can be string or struct.
-// e.g. QueryTable("user"), QueryTable(&user{}) or QueryTable((*User)(nil)),
-func (t *Transaction) QueryTable(ptrStructOrTableName interface{}) (qs QuerySeter) {
+//CreateCriteria for
+func (t *Transaction) CreateCriteria(ptrStructOrTableName interface{}) (criteria Criteria) {
 
 	val := reflect.ValueOf(ptrStructOrTableName)
 	typ := reflect.Indirect(val).Type()
@@ -206,17 +204,17 @@ func (t *Transaction) QueryTable(ptrStructOrTableName interface{}) (qs QuerySete
 	case string:
 		name := snakeString(ptrStructOrTableName.(string))
 		if tmap, er := t.dbmap.TableForName(name, true); er == nil {
-			qs = newQuerySet(t.dbmap, tmap)
+			criteria = newCriteria(t.dbmap, tmap, ptrStructOrTableName, typ)
 		}
 	case interface{}:
 		if tmap, er := t.dbmap.TableFor(typ, true); er == nil {
-			qs = newQuerySet(t.dbmap, tmap)
+			criteria = newCriteria(t.dbmap, tmap, ptrStructOrTableName, typ)
 		}
 	default:
 
 	}
-	if qs == nil {
-		panic(fmt.Errorf("<Transaction.QueryTable> table name: `%s` not exists", ptrStructOrTableName))
+	if criteria == nil {
+		panic(fmt.Errorf("<Transaction.CreateCriteria> table name: `%s` not exists", ptrStructOrTableName))
 	}
 	return
 }

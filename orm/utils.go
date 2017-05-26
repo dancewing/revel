@@ -278,7 +278,7 @@ func indirectType(v reflect.Type) reflect.Type {
 }
 
 // get fields description as flatted string.
-func getFlatParams(fi *ColumnMap, args []interface{}, tz *time.Location) (params []interface{}) {
+func getFlatParams(fi *fieldInfo, args []interface{}, tz *time.Location) (params []interface{}) {
 
 outFor:
 	for _, arg := range args {
@@ -382,7 +382,7 @@ outFor:
 				typ := val.Type()
 				name := getFullName(typ)
 				var value interface{}
-				if mmi, err := fi.Table.dbmap.TableFor(typ, true); err != nil {
+				if mmi, err := Database().Get().TableFor(typ, true); err != nil {
 					if _, vu, exist := getExistPk(mmi, val); exist {
 						value = vu
 					}
@@ -402,27 +402,27 @@ outFor:
 }
 
 // get pk column info.
-func getExistPk(mi *TableMap, ind reflect.Value) (column string, value interface{}, exist bool) {
-	fi := mi.keys[0]
+func getExistPk(mi *modelInfo, ind reflect.Value) (column string, value interface{}, exist bool) {
+	//fi := mi.fields.keys
 
-	v := ind.FieldByIndex(fi.fieldIndex)
-	if fi.fieldType&IsPositiveIntegerField > 0 {
-		vu := v.Uint()
-		exist = vu > 0
-		value = vu
-	} else if fi.fieldType&IsIntegerField > 0 {
-		vu := v.Int()
-		exist = true
-		value = vu
-	} else if fi.fieldType&IsRelField > 0 {
-		_, value, exist = getExistPk(fi.relModelInfo, reflect.Indirect(v))
-	} else {
-		vu := v.String()
-		exist = vu != ""
-		value = vu
-	}
+	// v := ind.FieldByIndex(fi.fieldIndex)
+	// if fi.fieldType&IsPositiveIntegerField > 0 {
+	// 	vu := v.Uint()
+	// 	exist = vu > 0
+	// 	value = vu
+	// } else if fi.fieldType&IsIntegerField > 0 {
+	// 	vu := v.Int()
+	// 	exist = true
+	// 	value = vu
+	// } else if fi.fieldType&IsRelField > 0 {
+	// 	_, value, exist = getExistPk(fi.relModelInfo, reflect.Indirect(v))
+	// } else {
+	// 	vu := v.String()
+	// 	exist = vu != ""
+	// 	value = vu
+	// }
 
-	column = fi.ColumnName
+	//column = fi.ColumnName
 	return
 }
 

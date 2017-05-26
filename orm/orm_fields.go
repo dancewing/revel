@@ -55,6 +55,13 @@ const (
 	IsFieldType            = ^-RelReverseMany<<1 + 1
 )
 
+type Fielder interface {
+	String() string
+	FieldType() int
+	SetRaw(interface{}) error
+	RawValue() interface{}
+}
+
 // BooleanField A true/false field.
 type BooleanField bool
 

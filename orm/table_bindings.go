@@ -34,9 +34,9 @@ type CustomScanner struct {
 }
 
 // Used to filter columns when selectively updating
-type ColumnFilter func(*ColumnMap) bool
+type ColumnFilter func(*fieldInfo) bool
 
-func acceptAllFilter(col *ColumnMap) bool {
+func acceptAllFilter(col *fieldInfo) bool {
 	return true
 }
 
@@ -65,6 +65,7 @@ func (plan *bindPlan) createBindInstance(elem reflect.Value, conv TypeConverter)
 
 	for i := 0; i < len(plan.argFields); i++ {
 		k := plan.argFields[i]
+
 		if k == versFieldConst {
 			newVer := bi.existingVersion + 1
 			bi.args = append(bi.args, newVer)
@@ -108,39 +109,49 @@ type bindInstance struct {
 	autoIncrFieldName string
 }
 
-func (t *TableMap) bindInsert(elem reflect.Value) (bindInstance, error) {
+func (t *modelInfo) bindInsert(elem reflect.Value) (bindInstance, error) {
 	plan := &t.insertPlan
 	plan.once.Do(func() {
 		plan.autoIncrIdx = -1
 
 		s := bytes.Buffer{}
 		s2 := bytes.Buffer{}
-		s.WriteString(fmt.Sprintf("insert into %s (", t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)))
+		s.WriteString(fmt.Sprintf("insert into %s (", Database().Get().Dialect.QuotedTableForQuery(t.schemaName, t.table)))
 
 		x := 0
 		first := true
-		for y := range t.Columns {
-			col := t.Columns[y]
-			if !(col.isAutoIncr && t.dbmap.Dialect.AutoIncrBindValue() == "") {
-				if !col.Transient {
+		for _, col := range t.fields.columns {
+			//col := t.Columns[y]
+			if !(col.auto && Database().Get().Dialect.AutoIncrBindValue() == "") {
+
+				if col.transient || col.fieldType == RelManyToMany || col.fieldType == RelReverseMany {
+
+				} else {
 					if !first {
 						s.WriteString(",")
 						s2.WriteString(",")
 					}
-					s.WriteString(t.dbmap.Dialect.QuoteField(col.ColumnName))
+					s.WriteString(Database().Get().Dialect.QuoteField(col.column))
 
-					if col.isAutoIncr {
-						s2.WriteString(t.dbmap.Dialect.AutoIncrBindValue())
-						plan.autoIncrIdx = y
-						plan.autoIncrFieldName = col.fieldName
+					if col.auto {
+						s2.WriteString(Database().Get().Dialect.AutoIncrBindValue())
+						plan.autoIncrIdx = x
+						plan.autoIncrFieldName = col.name
 					} else {
 						if col.DefaultValue == "" {
-							s2.WriteString(t.dbmap.Dialect.BindVar(x))
+							s2.WriteString(Database().Get().Dialect.BindVar(x))
 							if col == t.version {
-								plan.versField = col.fieldName
+								plan.versField = col.name
 								plan.argFields = append(plan.argFields, versFieldConst)
 							} else {
-								plan.argFields = append(plan.argFields, col.fieldName)
+
+								//TODO
+								if col.fieldType == RelManyToMany || col.fieldType == RelReverseMany {
+
+								} else {
+									plan.argFields = append(plan.argFields, col.name)
+								}
+
 							}
 							x++
 						} else {
@@ -149,26 +160,28 @@ func (t *TableMap) bindInsert(elem reflect.Value) (bindInstance, error) {
 					}
 					first = false
 				}
+
 			} else {
-				plan.autoIncrIdx = y
-				plan.autoIncrFieldName = col.fieldName
+				plan.autoIncrIdx = x
+				plan.autoIncrFieldName = col.name
 			}
+			x++
 		}
 		s.WriteString(") values (")
 		s.WriteString(s2.String())
 		s.WriteString(")")
 		if plan.autoIncrIdx > -1 {
-			s.WriteString(t.dbmap.Dialect.AutoIncrInsertSuffix(t.Columns[plan.autoIncrIdx]))
+			s.WriteString(Database().Get().Dialect.AutoIncrInsertSuffix(t.fields.GetByIndex(plan.autoIncrIdx)))
 		}
-		s.WriteString(t.dbmap.Dialect.QuerySuffix())
+		s.WriteString(Database().Get().Dialect.QuerySuffix())
 
 		plan.query = s.String()
 	})
 
-	return plan.createBindInstance(elem, t.dbmap.TypeConverter)
+	return plan.createBindInstance(elem, Database().Get().TypeConverter)
 }
 
-func (t *TableMap) bindUpdate(elem reflect.Value, colFilter ColumnFilter) (bindInstance, error) {
+func (t *modelInfo) bindUpdate(elem reflect.Value, colFilter ColumnFilter) (bindInstance, error) {
 	if colFilter == nil {
 		colFilter = acceptAllFilter
 	}
@@ -176,134 +189,140 @@ func (t *TableMap) bindUpdate(elem reflect.Value, colFilter ColumnFilter) (bindI
 	plan := &t.updatePlan
 	plan.once.Do(func() {
 		s := bytes.Buffer{}
-		s.WriteString(fmt.Sprintf("update %s set ", t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)))
+		s.WriteString(fmt.Sprintf("update %s set ", Database().Get().Dialect.QuotedTableForQuery(t.schemaName, t.table)))
 		x := 0
 
-		for y := range t.Columns {
-			col := t.Columns[y]
-			if !col.isAutoIncr && !col.Transient && colFilter(col) {
+		for _, col := range t.fields.columns {
+			//col := t.Columns[y]
+			if !col.auto && !col.transient && colFilter(col) {
 				if x > 0 {
 					s.WriteString(", ")
 				}
-				s.WriteString(t.dbmap.Dialect.QuoteField(col.ColumnName))
+				s.WriteString(Database().Get().Dialect.QuoteField(col.column))
 				s.WriteString("=")
-				s.WriteString(t.dbmap.Dialect.BindVar(x))
+				s.WriteString(Database().Get().Dialect.BindVar(x))
 
 				if col == t.version {
-					plan.versField = col.fieldName
+					plan.versField = col.name
 					plan.argFields = append(plan.argFields, versFieldConst)
 				} else {
-					plan.argFields = append(plan.argFields, col.fieldName)
+					plan.argFields = append(plan.argFields, col.name)
 				}
 				x++
 			}
 		}
 
 		s.WriteString(" where ")
-		for y := range t.keys {
-			col := t.keys[y]
+		var y = 0
+		for _, col := range t.fields.keys {
+			//col := t.keys[y]
 			if y > 0 {
 				s.WriteString(" and ")
 			}
-			s.WriteString(t.dbmap.Dialect.QuoteField(col.ColumnName))
+			s.WriteString(Database().Get().Dialect.QuoteField(col.column))
 			s.WriteString("=")
-			s.WriteString(t.dbmap.Dialect.BindVar(x))
 
-			plan.argFields = append(plan.argFields, col.fieldName)
-			plan.keyFields = append(plan.keyFields, col.fieldName)
-			x++
+			s.WriteString(Database().Get().Dialect.BindVar(y))
+			plan.argFields = append(plan.argFields, col.name)
+			plan.keyFields = append(plan.keyFields, col.name)
+			//x++
+			y++
 		}
 		if plan.versField != "" {
 			s.WriteString(" and ")
-			s.WriteString(t.dbmap.Dialect.QuoteField(t.version.ColumnName))
+			s.WriteString(Database().Get().Dialect.QuoteField(t.version.column))
 			s.WriteString("=")
-			s.WriteString(t.dbmap.Dialect.BindVar(x))
+			s.WriteString(Database().Get().Dialect.BindVar(x))
 			plan.argFields = append(plan.argFields, plan.versField)
 		}
-		s.WriteString(t.dbmap.Dialect.QuerySuffix())
+		s.WriteString(Database().Get().Dialect.QuerySuffix())
 
 		plan.query = s.String()
 	})
 
-	return plan.createBindInstance(elem, t.dbmap.TypeConverter)
+	return plan.createBindInstance(elem, Database().Get().TypeConverter)
 }
 
-func (t *TableMap) bindDelete(elem reflect.Value) (bindInstance, error) {
+func (t *modelInfo) bindDelete(elem reflect.Value) (bindInstance, error) {
 	plan := &t.deletePlan
 	plan.once.Do(func() {
 		s := bytes.Buffer{}
-		s.WriteString(fmt.Sprintf("delete from %s", t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName)))
+		s.WriteString(fmt.Sprintf("delete from %s", Database().Get().Dialect.QuotedTableForQuery(t.schemaName, t.table)))
 
-		for y := range t.Columns {
-			col := t.Columns[y]
-			if !col.Transient {
+		for _, col := range t.fields.columns {
+			//col := t.Columns[y]
+			if !col.transient {
 				if col == t.version {
-					plan.versField = col.fieldName
+					plan.versField = col.name
 				}
 			}
 		}
 
 		s.WriteString(" where ")
-		for x := range t.keys {
-			k := t.keys[x]
+		var x = 0
+		for _, k := range t.fields.keys {
+			//k := t.keys[x]
 			if x > 0 {
 				s.WriteString(" and ")
 			}
-			s.WriteString(t.dbmap.Dialect.QuoteField(k.ColumnName))
+			s.WriteString(Database().Get().Dialect.QuoteField(k.column))
 			s.WriteString("=")
-			s.WriteString(t.dbmap.Dialect.BindVar(x))
+			s.WriteString(Database().Get().Dialect.BindVar(x))
 
-			plan.keyFields = append(plan.keyFields, k.fieldName)
-			plan.argFields = append(plan.argFields, k.fieldName)
+			plan.keyFields = append(plan.keyFields, k.name)
+			plan.argFields = append(plan.argFields, k.name)
+			x++
 		}
 		if plan.versField != "" {
 			s.WriteString(" and ")
-			s.WriteString(t.dbmap.Dialect.QuoteField(t.version.ColumnName))
+			s.WriteString(Database().Get().Dialect.QuoteField(t.version.column))
 			s.WriteString("=")
-			s.WriteString(t.dbmap.Dialect.BindVar(len(plan.argFields)))
+			s.WriteString(Database().Get().Dialect.BindVar(len(plan.argFields)))
 
 			plan.argFields = append(plan.argFields, plan.versField)
 		}
-		s.WriteString(t.dbmap.Dialect.QuerySuffix())
+		s.WriteString(Database().Get().Dialect.QuerySuffix())
 
 		plan.query = s.String()
 	})
 
-	return plan.createBindInstance(elem, t.dbmap.TypeConverter)
+	return plan.createBindInstance(elem, Database().Get().TypeConverter)
 }
 
-func (t *TableMap) bindGet() *bindPlan {
+func (t *modelInfo) bindGet() *bindPlan {
 	plan := &t.getPlan
 	plan.once.Do(func() {
 		s := bytes.Buffer{}
 		s.WriteString("select ")
 
 		x := 0
-		for _, col := range t.Columns {
-			if !col.Transient {
+		for _, col := range t.fields.columns {
+			if !col.transient {
 				if x > 0 {
 					s.WriteString(",")
 				}
-				s.WriteString(t.dbmap.Dialect.QuoteField(col.ColumnName))
-				plan.argFields = append(plan.argFields, col.fieldName)
+				s.WriteString(Database().Get().Dialect.QuoteField(col.column))
+				plan.argFields = append(plan.argFields, col.name)
 				x++
 			}
 		}
 		s.WriteString(" from ")
-		s.WriteString(t.dbmap.Dialect.QuotedTableForQuery(t.SchemaName, t.TableName))
+		s.WriteString(Database().Get().Dialect.QuotedTableForQuery(t.schemaName, t.table))
 		s.WriteString(" where ")
-		for x := range t.keys {
-			col := t.keys[x]
-			if x > 0 {
+		var y = 0
+		for _, col := range t.fields.keys {
+			//col := t.keys[x]
+			if y > 0 {
 				s.WriteString(" and ")
 			}
-			s.WriteString(t.dbmap.Dialect.QuoteField(col.ColumnName))
+			s.WriteString(Database().Get().Dialect.QuoteField(col.column))
 			s.WriteString("=")
-			s.WriteString(t.dbmap.Dialect.BindVar(x))
+			s.WriteString(Database().Get().Dialect.BindVar(y))
 
-			plan.keyFields = append(plan.keyFields, col.fieldName)
+			plan.keyFields = append(plan.keyFields, col.name)
+			y++
 		}
-		s.WriteString(t.dbmap.Dialect.QuerySuffix())
+		s.WriteString(Database().Get().Dialect.QuerySuffix())
 
 		plan.query = s.String()
 	})

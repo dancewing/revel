@@ -14,12 +14,9 @@ package orm
 import (
 	"bytes"
 	"database/sql"
-	"database/sql/driver"
 	"errors"
 	"fmt"
 	"reflect"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -41,20 +38,20 @@ type DbMap struct {
 
 	TypeConverter TypeConverter
 
-	tables        []*TableMap
-	tablesDynamic map[string]*TableMap // tables that use same go-struct and different db table names
+	tables        []*modelInfo
+	tablesDynamic map[string]*modelInfo // tables that use same go-struct and different db table names
 	logger        GorpLogger
 	logPrefix     string
 }
 
-func (m *DbMap) dynamicTableAdd(tableName string, tbl *TableMap) {
+func (m *DbMap) dynamicTableAdd(tableName string, tbl *modelInfo) {
 	if m.tablesDynamic == nil {
-		m.tablesDynamic = make(map[string]*TableMap)
+		m.tablesDynamic = make(map[string]*modelInfo)
 	}
 	m.tablesDynamic[tableName] = tbl
 }
 
-func (m *DbMap) dynamicTableFind(tableName string) (*TableMap, bool) {
+func (m *DbMap) dynamicTableFind(tableName string) (*modelInfo, bool) {
 	if m.tablesDynamic == nil {
 		return nil, false
 	}
@@ -62,9 +59,9 @@ func (m *DbMap) dynamicTableFind(tableName string) (*TableMap, bool) {
 	return tbl, found
 }
 
-func (m *DbMap) dynamicTableMap() map[string]*TableMap {
+func (m *DbMap) dynamicmodelInfo() map[string]*modelInfo {
 	if m.tablesDynamic == nil {
-		m.tablesDynamic = make(map[string]*TableMap)
+		m.tablesDynamic = make(map[string]*modelInfo)
 	}
 	return m.tablesDynamic
 }
@@ -82,7 +79,7 @@ func (m *DbMap) CreateIndex() error {
 		}
 	}
 
-	for _, table := range m.dynamicTableMap() {
+	for _, table := range m.dynamicmodelInfo() {
 		for _, index := range table.indexes {
 			err = m.createIndexImpl(dialect, table, index)
 			if err != nil {
@@ -95,7 +92,7 @@ func (m *DbMap) CreateIndex() error {
 }
 
 func (m *DbMap) createIndexImpl(dialect reflect.Type,
-	table *TableMap,
+	table *modelInfo,
 	index *IndexMap) error {
 	s := bytes.Buffer{}
 	s.WriteString("create")
@@ -103,7 +100,7 @@ func (m *DbMap) createIndexImpl(dialect reflect.Type,
 		s.WriteString(" unique")
 	}
 	s.WriteString(" index")
-	s.WriteString(fmt.Sprintf(" %s on %s", index.IndexName, table.TableName))
+	s.WriteString(fmt.Sprintf(" %s on %s", index.IndexName, table.table))
 	if dname := dialect.Name(); dname == "PostgresDialect" && index.IndexType != "" {
 		s.WriteString(fmt.Sprintf(" %s %s", m.Dialect.CreateIndexSuffix(), index.IndexType))
 	}
@@ -124,20 +121,20 @@ func (m *DbMap) createIndexImpl(dialect reflect.Type,
 	return err
 }
 
-func (t *TableMap) DropIndex(name string) error {
+func (t *modelInfo) DropIndex(name string) error {
 
 	var err error
-	dialect := reflect.TypeOf(t.dbmap.Dialect)
+	dialect := reflect.TypeOf(Database().Get().Dialect)
 	for _, idx := range t.indexes {
 		if idx.IndexName == name {
 			s := bytes.Buffer{}
 			s.WriteString(fmt.Sprintf("DROP INDEX %s", idx.IndexName))
 
 			if dname := dialect.Name(); dname == "MySQLDialect" {
-				s.WriteString(fmt.Sprintf(" %s %s", t.dbmap.Dialect.DropIndexSuffix(), t.TableName))
+				s.WriteString(fmt.Sprintf(" %s %s", Database().Get().Dialect.DropIndexSuffix(), t.table))
 			}
 			s.WriteString(";")
-			_, e := t.dbmap.Exec(s.String())
+			_, e := Database().Get().Exec(s.String())
 			if e != nil {
 				err = e
 			}
@@ -154,20 +151,20 @@ func (t *TableMap) DropIndex(name string) error {
 // the given DbMap.
 //
 // This operation is idempotent. If i's type is already mapped, the
-// existing *TableMap is returned
-func (m *DbMap) AddTable(i interface{}) *TableMap {
+// existing *modelInfo is returned
+func (m *DbMap) AddTable(i interface{}) *modelInfo {
 	return m.AddTableWithName(i, "")
 }
 
 // AddTableWithName has the same behavior as AddTable, but sets
 // table.TableName to name.
-func (m *DbMap) AddTableWithName(i interface{}, name string) *TableMap {
+func (m *DbMap) AddTableWithName(i interface{}, name string) *modelInfo {
 	return m.AddTableWithNameAndSchema(i, "", name)
 }
 
 // AddTableWithNameAndSchema has the same behavior as AddTable, but sets
 // table.TableName to name.
-func (m *DbMap) AddTableWithNameAndSchema(i interface{}, schema string, name string) *TableMap {
+func (m *DbMap) AddTableWithNameAndSchema(i interface{}, schema string, name string) *modelInfo {
 	t := reflect.TypeOf(i)
 	if name == "" {
 		name = t.Name()
@@ -178,18 +175,18 @@ func (m *DbMap) AddTableWithNameAndSchema(i interface{}, schema string, name str
 	for i := range m.tables {
 		table := m.tables[i]
 		if table.gotype == t {
-			table.TableName = name
+			table.table = name
 			return table
 		}
 	}
 
-	tmap := &TableMap{gotype: t, TableName: name, SchemaName: schema, dbmap: m}
-	var primaryKey []*ColumnMap
-	tmap.Columns, primaryKey = m.readStructColumns(t)
-	m.tables = append(m.tables, tmap)
-	if len(primaryKey) > 0 {
-		tmap.keys = append(tmap.keys, primaryKey...)
-	}
+	tmap := &modelInfo{gotype: t, table: name, schemaName: schema}
+	// var primaryKey []*fieldInfo
+	// tmap.fields.columns, primaryKey = m.readStructColumns(t)
+	// m.tables = append(m.tables, tmap)
+	// if len(primaryKey) > 0 {
+	// 	tmap.keys = append(tmap.keys, primaryKey...)
+	// }
 
 	return tmap
 }
@@ -217,14 +214,13 @@ func (m *DbMap) RegisterModelWithSchema(i interface{}, schema string) {
 	for i := range m.tables {
 		table := m.tables[i]
 		if table.gotype == typ {
-			table.TableName = name
+			table.table = name
 			return
 		}
 	}
 
-	keys := getTableKeys(val)
-	tmap := m.initialTableMap(typ, name, schema, keys, m)
-
+	//keys := getTableKeys(val)
+	tmap := newModelInfo(val)
 	m.tables = append(m.tables, tmap)
 
 }
@@ -236,11 +232,11 @@ func (m *DbMap) RegisterModel(i interface{}) {
 // AddTableDynamic registers the given interface type with gorp.
 // The table name will be dynamically determined at runtime by
 // using the GetTableName method on DynamicTable interface
-func (m *DbMap) AddTableDynamic(inp DynamicTable, schema string) *TableMap {
+func (m *DbMap) AddTableDynamic(inp DynamicTable, schema string) *modelInfo {
 
 	val := reflect.ValueOf(inp)
-	elm := val.Elem()
-	t := elm.Type()
+	//elm := val.Elem()
+	//t := elm.Type()
 	name := inp.TableName()
 	if name == "" {
 		panic("Missing table name in DynamicTable instance")
@@ -251,316 +247,155 @@ func (m *DbMap) AddTableDynamic(inp DynamicTable, schema string) *TableMap {
 		panic(fmt.Sprintf("A table with the same name %v already exists", name))
 	}
 
-	tmap := &TableMap{gotype: t, TableName: name, SchemaName: schema, dbmap: m}
-	var primaryKey []*ColumnMap
-	tmap.Columns, primaryKey = m.readStructColumns(t)
-	if len(primaryKey) > 0 {
-		tmap.keys = append(tmap.keys, primaryKey...)
-	}
+	//tmap := &modelInfo{gotype: t, TableName: name, SchemaName: schema}
+	tmap := newModelInfo(val)
+	tmap.table = name
+	tmap.schemaName = schema
+
+	// var primaryKey []*fieldInfo
+	// tmap.fields.columns, primaryKey = m.readStructColumns(t)
+	// if len(primaryKey) > 0 {
+	// 	tmap.keys = append(tmap.fields.keys, primaryKey...)
+	// }
 
 	m.dynamicTableAdd(name, tmap)
 
 	return tmap
 }
 
-func (m *DbMap) initialTableMap(t reflect.Type, table, schema string, keys []string, dmap *DbMap) *TableMap {
+// func (m *DbMap) readStructColumns(t reflect.Type) (cols []*fieldInfo, primaryKey []*fieldInfo) {
+// 	primaryKey = make([]*fieldInfo, 0)
+// 	n := t.NumField()
+// 	for i := 0; i < n; i++ {
+// 		f := t.Field(i)
+// 		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+// 			// Recursively add nested fields in embedded structs.
+// 			subcols, subpk := m.readStructColumns(f.Type)
+// 			// Don't append nested fields that have the same field
+// 			// name as an already-mapped field.
+// 			for _, subcol := range subcols {
+// 				shouldAppend := true
+// 				for _, col := range cols {
+// 					if !subcol.Transient && subcol.fieldName == col.fieldName {
+// 						shouldAppend = false
+// 						break
+// 					}
+// 				}
+// 				if shouldAppend {
+// 					cols = append(cols, subcol)
+// 				}
+// 			}
+// 			if subpk != nil {
+// 				primaryKey = append(primaryKey, subpk...)
+// 			}
+// 		} else {
+// 			// Tag = Name { ','  Option }
+// 			// Option = OptionKey [ ':' OptionValue ]
+// 			cArguments := strings.Split(f.Tag.Get("orm"), ",")
+// 			columnName := cArguments[0]
+// 			var maxSize int
+// 			var defaultValue string
+// 			var isAuto bool
+// 			var isPK bool
+// 			var isNotNull bool
+// 			for _, argString := range cArguments[1:] {
+// 				argString = strings.TrimSpace(argString)
+// 				arg := strings.SplitN(argString, ":", 2)
 
-	tmap := &TableMap{gotype: t, TableName: table, SchemaName: schema, dbmap: dmap}
+// 				// check mandatory/unexpected option values
+// 				switch arg[0] {
+// 				case "size", "default":
+// 					// options requiring value
+// 					if len(arg) == 1 {
+// 						panic(fmt.Sprintf("missing option value for option %v on field %v", arg[0], f.Name))
+// 					}
+// 				default:
+// 					// options where value is invalid (currently all other options)
+// 					if len(arg) == 2 {
+// 						panic(fmt.Sprintf("unexpected option value for option %v on field %v", arg[0], f.Name))
+// 					}
+// 				}
 
-	tmap.FieldMap = make(map[string]*ColumnMap)
-	tmap.FieldLowMap = make(map[string]*ColumnMap)
-	tmap.ColumnMap = make(map[string]*ColumnMap)
-	tmap.ColumnLowMap = make(map[string]*ColumnMap)
+// 				switch arg[0] {
+// 				case "size":
+// 					maxSize, _ = strconv.Atoi(arg[1])
+// 				case "default":
+// 					defaultValue = arg[1]
+// 				case "primarykey":
+// 					isPK = true
+// 				case "autoincrement":
+// 					isAuto = true
+// 				case "notnull":
+// 					isNotNull = true
+// 				default:
+// 					panic(fmt.Sprintf("Unrecognized tag option for field %v: %v", f.Name, arg))
+// 				}
+// 			}
+// 			if columnName == "" {
+// 				columnName = f.Name
+// 			}
 
-	var (
-		cols       []*ColumnMap
-		primaryKey []*ColumnMap
-	)
+// 			gotype := f.Type
+// 			valueType := gotype
+// 			if valueType.Kind() == reflect.Ptr {
+// 				valueType = valueType.Elem()
+// 			}
+// 			value := reflect.New(valueType).Interface()
+// 			if m.TypeConverter != nil {
+// 				// Make a new pointer to a value of type gotype and
+// 				// pass it to the TypeConverter's FromDb method to see
+// 				// if a different type should be used for the column
+// 				// type during table creation.
+// 				scanner, useHolder := m.TypeConverter.FromDb(value)
+// 				if useHolder {
+// 					value = scanner.Holder
+// 					gotype = reflect.TypeOf(value)
+// 				}
+// 			}
+// 			if typer, ok := value.(SqlTyper); ok {
+// 				gotype = reflect.TypeOf(typer.SqlType())
+// 			} else if valuer, ok := value.(driver.Valuer); ok {
+// 				// Only check for driver.Valuer if SqlTyper wasn't
+// 				// found.
+// 				v, err := valuer.Value()
+// 				if err == nil && v != nil {
+// 					gotype = reflect.TypeOf(v)
+// 				}
+// 			}
+// 			cm := &fieldInfo{
+// 				ColumnName:   columnName,
+// 				DefaultValue: defaultValue,
+// 				Transient:    columnName == "-",
+// 				fieldName:    f.Name,
+// 				gotype:       gotype,
+// 				isPK:         isPK,
+// 				isAutoIncr:   isAuto,
+// 				isNotNull:    isNotNull,
+// 				MaxSize:      maxSize,
+// 			}
+// 			if isPK {
+// 				primaryKey = append(primaryKey, cm)
+// 			}
+// 			// Check for nested fields of the same field name and
+// 			// override them.
+// 			shouldAppend := true
+// 			for index, col := range cols {
+// 				if !col.Transient && col.fieldName == cm.fieldName {
+// 					cols[index] = cm
+// 					shouldAppend = false
+// 					break
+// 				}
+// 			}
+// 			if shouldAppend {
+// 				cols = append(cols, cm)
+// 			}
+// 		}
 
-	primaryKey = make([]*ColumnMap, 0)
-	n := t.NumField()
-	for i := 0; i < n; i++ {
-		f := t.Field(i)
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			// Recursively add nested fields in embedded structs.
-			subcols, subpk := m.readStructColumns(f.Type)
-			// Don't append nested fields that have the same field
-			// name as an already-mapped field.
-			for _, subcol := range subcols {
-				shouldAppend := true
-				for _, col := range cols {
-					if !subcol.Transient && subcol.fieldName == col.fieldName {
-						shouldAppend = false
-						break
-					}
-				}
-				if shouldAppend {
-					cols = append(cols, subcol)
-				}
-			}
-			if subpk != nil {
-				primaryKey = append(primaryKey, subpk...)
-			}
-		} else {
-			// Tag = Name { ','  Option }
-			// Option = OptionKey [ ':' OptionValue ]
-			cArguments := strings.Split(f.Tag.Get("orm"), ",")
-			columnName := cArguments[0]
-			var maxSize int
-			var defaultValue string
-			var isAuto bool
-			var isPK bool
-			var isNotNull bool
-			for _, argString := range cArguments[1:] {
-				argString = strings.TrimSpace(argString)
-				arg := strings.SplitN(argString, ":", 2)
+// 	}
+// 	return
+// }
 
-				// check mandatory/unexpected option values
-				switch arg[0] {
-				case "size", "default":
-					// options requiring value
-					if len(arg) == 1 {
-						panic(fmt.Sprintf("missing option value for option %v on field %v", arg[0], f.Name))
-					}
-				default:
-					// options where value is invalid (currently all other options)
-					if len(arg) == 2 {
-						panic(fmt.Sprintf("unexpected option value for option %v on field %v", arg[0], f.Name))
-					}
-				}
-
-				switch arg[0] {
-				case "size":
-					maxSize, _ = strconv.Atoi(arg[1])
-				case "default":
-					defaultValue = arg[1]
-				case "primarykey":
-					isPK = true
-				case "autoincrement":
-					isAuto = true
-				case "notnull":
-					isNotNull = true
-				default:
-					panic(fmt.Sprintf("Unrecognized tag option for field %v: %v", f.Name, arg))
-				}
-			}
-			if columnName == "" {
-				columnName = f.Name
-			}
-
-			gotype := f.Type
-			valueType := gotype
-			if valueType.Kind() == reflect.Ptr {
-				valueType = valueType.Elem()
-			}
-			value := reflect.New(valueType).Interface()
-			if m.TypeConverter != nil {
-				// Make a new pointer to a value of type gotype and
-				// pass it to the TypeConverter's FromDb method to see
-				// if a different type should be used for the column
-				// type during table creation.
-				scanner, useHolder := m.TypeConverter.FromDb(value)
-				if useHolder {
-					value = scanner.Holder
-					gotype = reflect.TypeOf(value)
-				}
-			}
-			if typer, ok := value.(SqlTyper); ok {
-				gotype = reflect.TypeOf(typer.SqlType())
-			} else if valuer, ok := value.(driver.Valuer); ok {
-				// Only check for driver.Valuer if SqlTyper wasn't
-				// found.
-				v, err := valuer.Value()
-				if err == nil && v != nil {
-					gotype = reflect.TypeOf(v)
-				}
-			}
-			cm := &ColumnMap{
-				ColumnName:   columnName,
-				DefaultValue: defaultValue,
-				Transient:    columnName == "-",
-				fieldName:    f.Name,
-				gotype:       gotype,
-				isPK:         isPK,
-				isAutoIncr:   isAuto,
-				isNotNull:    isNotNull,
-				MaxSize:      maxSize,
-			}
-
-			if isPK {
-				primaryKey = append(primaryKey, cm)
-			}
-			// Check for nested fields of the same field name and
-			// override them.
-			shouldAppend := true
-			for index, col := range cols {
-				if !col.Transient && col.fieldName == cm.fieldName {
-					cols[index] = cm
-					shouldAppend = false
-					break
-				}
-			}
-			if shouldAppend {
-				cols = append(cols, cm)
-			}
-
-			tmap.FieldMap[f.Name] = cm
-			tmap.FieldLowMap[strings.ToLower(f.Name)] = cm
-			tmap.ColumnMap[columnName] = cm
-			tmap.ColumnLowMap[strings.ToLower(columnName)] = cm
-
-		}
-
-	}
-
-	tmap.keys = primaryKey
-	tmap.Columns = cols
-
-	if keys != nil {
-		for key := range keys {
-			col := tmap.ColMap(keys[key])
-			if col != nil {
-				tmap.keys = append(tmap.keys, col)
-			}
-		}
-
-	}
-	return tmap
-}
-
-func (m *DbMap) readStructColumns(t reflect.Type) (cols []*ColumnMap, primaryKey []*ColumnMap) {
-	primaryKey = make([]*ColumnMap, 0)
-	n := t.NumField()
-	for i := 0; i < n; i++ {
-		f := t.Field(i)
-		if f.Anonymous && f.Type.Kind() == reflect.Struct {
-			// Recursively add nested fields in embedded structs.
-			subcols, subpk := m.readStructColumns(f.Type)
-			// Don't append nested fields that have the same field
-			// name as an already-mapped field.
-			for _, subcol := range subcols {
-				shouldAppend := true
-				for _, col := range cols {
-					if !subcol.Transient && subcol.fieldName == col.fieldName {
-						shouldAppend = false
-						break
-					}
-				}
-				if shouldAppend {
-					cols = append(cols, subcol)
-				}
-			}
-			if subpk != nil {
-				primaryKey = append(primaryKey, subpk...)
-			}
-		} else {
-			// Tag = Name { ','  Option }
-			// Option = OptionKey [ ':' OptionValue ]
-			cArguments := strings.Split(f.Tag.Get("orm"), ",")
-			columnName := cArguments[0]
-			var maxSize int
-			var defaultValue string
-			var isAuto bool
-			var isPK bool
-			var isNotNull bool
-			for _, argString := range cArguments[1:] {
-				argString = strings.TrimSpace(argString)
-				arg := strings.SplitN(argString, ":", 2)
-
-				// check mandatory/unexpected option values
-				switch arg[0] {
-				case "size", "default":
-					// options requiring value
-					if len(arg) == 1 {
-						panic(fmt.Sprintf("missing option value for option %v on field %v", arg[0], f.Name))
-					}
-				default:
-					// options where value is invalid (currently all other options)
-					if len(arg) == 2 {
-						panic(fmt.Sprintf("unexpected option value for option %v on field %v", arg[0], f.Name))
-					}
-				}
-
-				switch arg[0] {
-				case "size":
-					maxSize, _ = strconv.Atoi(arg[1])
-				case "default":
-					defaultValue = arg[1]
-				case "primarykey":
-					isPK = true
-				case "autoincrement":
-					isAuto = true
-				case "notnull":
-					isNotNull = true
-				default:
-					panic(fmt.Sprintf("Unrecognized tag option for field %v: %v", f.Name, arg))
-				}
-			}
-			if columnName == "" {
-				columnName = f.Name
-			}
-
-			gotype := f.Type
-			valueType := gotype
-			if valueType.Kind() == reflect.Ptr {
-				valueType = valueType.Elem()
-			}
-			value := reflect.New(valueType).Interface()
-			if m.TypeConverter != nil {
-				// Make a new pointer to a value of type gotype and
-				// pass it to the TypeConverter's FromDb method to see
-				// if a different type should be used for the column
-				// type during table creation.
-				scanner, useHolder := m.TypeConverter.FromDb(value)
-				if useHolder {
-					value = scanner.Holder
-					gotype = reflect.TypeOf(value)
-				}
-			}
-			if typer, ok := value.(SqlTyper); ok {
-				gotype = reflect.TypeOf(typer.SqlType())
-			} else if valuer, ok := value.(driver.Valuer); ok {
-				// Only check for driver.Valuer if SqlTyper wasn't
-				// found.
-				v, err := valuer.Value()
-				if err == nil && v != nil {
-					gotype = reflect.TypeOf(v)
-				}
-			}
-			cm := &ColumnMap{
-				ColumnName:   columnName,
-				DefaultValue: defaultValue,
-				Transient:    columnName == "-",
-				fieldName:    f.Name,
-				gotype:       gotype,
-				isPK:         isPK,
-				isAutoIncr:   isAuto,
-				isNotNull:    isNotNull,
-				MaxSize:      maxSize,
-			}
-			if isPK {
-				primaryKey = append(primaryKey, cm)
-			}
-			// Check for nested fields of the same field name and
-			// override them.
-			shouldAppend := true
-			for index, col := range cols {
-				if !col.Transient && col.fieldName == cm.fieldName {
-					cols[index] = cm
-					shouldAppend = false
-					break
-				}
-			}
-			if shouldAppend {
-				cols = append(cols, cm)
-			}
-		}
-
-	}
-	return
-}
-
-// CreateTables iterates through TableMaps registered to this DbMap and
+// CreateTables iterates through modelInfos registered to this DbMap and
 // executes "create table" statements against the database for each.
 //
 // This is particularly useful in unit tests where you want to create
@@ -577,9 +412,10 @@ func (m *DbMap) CreateTablesIfNotExists() error {
 }
 
 func (m *DbMap) createTables(ifNotExists bool) error {
+
+	models := modelCache.all()
 	var err error
-	for i := range m.tables {
-		table := m.tables[i]
+	for _, table := range models {
 		sql := table.SqlForCreate(ifNotExists)
 		_, err = m.Exec(sql)
 		if err != nil {
@@ -587,7 +423,7 @@ func (m *DbMap) createTables(ifNotExists bool) error {
 		}
 	}
 
-	for _, tbl := range m.dynamicTableMap() {
+	for _, tbl := range m.dynamicmodelInfo() {
 		sql := tbl.SqlForCreate(ifNotExists)
 		_, err = m.Exec(sql)
 		if err != nil {
@@ -623,7 +459,7 @@ func (m *DbMap) DropTableIfExists(table interface{}) error {
 	return m.dropTable(t, tableName, true)
 }
 
-// DropTables iterates through TableMaps registered to this DbMap and
+// DropTables iterates through modelInfos registered to this DbMap and
 // executes "drop table" statements against the database for each.
 func (m *DbMap) DropTables() error {
 	return m.dropTables(false)
@@ -646,7 +482,7 @@ func (m *DbMap) dropTables(addIfExists bool) (err error) {
 		}
 	}
 
-	for _, table := range m.dynamicTableMap() {
+	for _, table := range m.dynamicmodelInfo() {
 		err = m.dropTableImpl(table, addIfExists)
 		if err != nil {
 			return err
@@ -660,22 +496,22 @@ func (m *DbMap) dropTables(addIfExists bool) (err error) {
 func (m *DbMap) dropTable(t reflect.Type, name string, addIfExists bool) error {
 	table := tableOrNil(m, t, name)
 	if table == nil {
-		return fmt.Errorf("table %s was not registered", table.TableName)
+		return fmt.Errorf("table %s was not registered", table.table)
 	}
 
 	return m.dropTableImpl(table, addIfExists)
 }
 
-func (m *DbMap) dropTableImpl(table *TableMap, ifExists bool) (err error) {
+func (m *DbMap) dropTableImpl(table *modelInfo, ifExists bool) (err error) {
 	tableDrop := "drop table"
 	if ifExists {
-		tableDrop = m.Dialect.IfTableExists(tableDrop, table.SchemaName, table.TableName)
+		tableDrop = m.Dialect.IfTableExists(tableDrop, table.schemaName, table.table)
 	}
-	_, err = m.Exec(fmt.Sprintf("%s %s;", tableDrop, m.Dialect.QuotedTableForQuery(table.SchemaName, table.TableName)))
+	_, err = m.Exec(fmt.Sprintf("%s %s;", tableDrop, m.Dialect.QuotedTableForQuery(table.schemaName, table.table)))
 	return err
 }
 
-// TruncateTables iterates through TableMaps registered to this DbMap and
+// TruncateTables iterates through modelInfos registered to this DbMap and
 // executes "truncate table" statements against the database for each, or in the case of
 // sqlite, a "delete from" with no "where" clause, which uses the truncate optimization
 // (http://www.sqlite.org/lang_delete.html)
@@ -683,14 +519,14 @@ func (m *DbMap) TruncateTables() error {
 	var err error
 	for i := range m.tables {
 		table := m.tables[i]
-		_, e := m.Exec(fmt.Sprintf("%s %s;", m.Dialect.TruncateClause(), m.Dialect.QuotedTableForQuery(table.SchemaName, table.TableName)))
+		_, e := m.Exec(fmt.Sprintf("%s %s;", m.Dialect.TruncateClause(), m.Dialect.QuotedTableForQuery(table.schemaName, table.table)))
 		if e != nil {
 			err = e
 		}
 	}
 
-	for _, table := range m.dynamicTableMap() {
-		_, e := m.Exec(fmt.Sprintf("%s %s;", m.Dialect.TruncateClause(), m.Dialect.QuotedTableForQuery(table.SchemaName, table.TableName)))
+	for _, table := range m.dynamicmodelInfo() {
+		_, e := m.Exec(fmt.Sprintf("%s %s;", m.Dialect.TruncateClause(), m.Dialect.QuotedTableForQuery(table.schemaName, table.table)))
 		if e != nil {
 			err = e
 		}
@@ -702,7 +538,7 @@ func (m *DbMap) TruncateTables() error {
 // Insert runs a SQL INSERT statement for each element in list.  List
 // items must be pointers.
 //
-// Any interface whose TableMap has an auto-increment primary key will
+// Any interface whose modelInfo has an auto-increment primary key will
 // have its last insert id bound to the PK field on the struct.
 //
 // The hook functions PreInsert() and/or PostInsert() will be executed
@@ -721,7 +557,7 @@ func (m *DbMap) Insert(list ...interface{}) error {
 //
 // Returns the number of rows updated.
 //
-// Returns an error if SetKeys has not been called on the TableMap
+// Returns an error if SetKeys has not been called on the modelInfo
 // Panics if any interface in the list has not been registered with AddTable
 func (m *DbMap) Update(list ...interface{}) (int64, error) {
 	return update(m, m, nil, list...)
@@ -737,7 +573,7 @@ func (m *DbMap) Update(list ...interface{}) (int64, error) {
 //
 // Returns the number of rows updated.
 //
-// Returns an error if SetKeys has not been called on the TableMap
+// Returns an error if SetKeys has not been called on the modelInfo
 // Panics if any interface in the list has not been registered with AddTable
 func (m *DbMap) UpdateColumns(filter ColumnFilter, list ...interface{}) (int64, error) {
 	return update(m, m, filter, list...)
@@ -751,7 +587,7 @@ func (m *DbMap) UpdateColumns(filter ColumnFilter, list ...interface{}) (int64, 
 //
 // Returns the number of rows deleted.
 //
-// Returns an error if SetKeys has not been called on the TableMap
+// Returns an error if SetKeys has not been called on the modelInfo
 // Panics if any interface in the list has not been registered with AddTable
 func (m *DbMap) Delete(list ...interface{}) (int64, error) {
 	return delete(m, m, list...)
@@ -770,7 +606,7 @@ func (m *DbMap) Delete(list ...interface{}) (int64, error) {
 //
 // Returns a pointer to a struct that matches or nil if no row is found.
 //
-// Returns an error if SetKeys has not been called on the TableMap
+// Returns an error if SetKeys has not been called on the modelInfo
 // Panics if any interface in the list has not been registered with AddTable
 func (m *DbMap) Get(i interface{}, keys ...interface{}) (interface{}, error) {
 	return get(m, m, i, keys...)
@@ -857,25 +693,25 @@ func (m *DbMap) Begin() (*Transaction, error) {
 	return &Transaction{m, tx, false}, nil
 }
 
-// TableFor returns the *TableMap corresponding to the given Go Type
+// TableFor returns the *modelInfo corresponding to the given Go Type
 // If no table is mapped to that type an error is returned.
 // If checkPK is true and the mapped table has no registered PKs, an error is returned.
-func (m *DbMap) TableFor(t reflect.Type, checkPK bool) (*TableMap, error) {
+func (m *DbMap) TableFor(t reflect.Type, checkPK bool) (*modelInfo, error) {
 	table := tableOrNil(m, t, "")
 	if table == nil {
 		return nil, fmt.Errorf("no table found for type: %v", t.Name())
 	}
 
-	if checkPK && len(table.keys) < 1 {
+	if checkPK && len(table.fields.keys) < 1 {
 		e := fmt.Sprintf("gorp: no keys defined for table: %s",
-			table.TableName)
+			table.table)
 		return nil, errors.New(e)
 	}
 
 	return table, nil
 }
 
-func (m *DbMap) TableForName(tableName string, checkPK bool) (*TableMap, error) {
+func (m *DbMap) TableForName(tableName string, checkPK bool) (*modelInfo, error) {
 
 	table := getTableByName(m, tableName)
 
@@ -883,16 +719,15 @@ func (m *DbMap) TableForName(tableName string, checkPK bool) (*TableMap, error) 
 		return nil, fmt.Errorf("no table found for type: %v", tableName)
 	}
 
-	if checkPK && len(table.keys) < 1 {
-		e := fmt.Sprintf("gorp: no keys defined for table: %s",
-			table.TableName)
+	if checkPK && len(table.fields.keys) < 1 {
+		e := fmt.Sprintf("gorp: no keys defined for table: %s", table.table)
 		return nil, errors.New(e)
 	}
 
 	return table, nil
 }
 
-func (m *DbMap) GetByFullName(tableName string, checkPK bool) (*TableMap, error) {
+func (m *DbMap) GetByFullName(tableName string, checkPK bool) (*modelInfo, error) {
 
 	table := getTableByName(m, tableName)
 
@@ -900,28 +735,27 @@ func (m *DbMap) GetByFullName(tableName string, checkPK bool) (*TableMap, error)
 		return nil, fmt.Errorf("no table found for type: %v", tableName)
 	}
 
-	if checkPK && len(table.keys) < 1 {
-		e := fmt.Sprintf("gorp: no keys defined for table: %s",
-			table.TableName)
+	if checkPK && len(table.fields.keys) < 1 {
+		e := fmt.Sprintf("gorp: no keys defined for table: %s", table.table)
 		return nil, errors.New(e)
 	}
 
 	return table, nil
 }
 
-// DynamicTableFor returns the *TableMap for the dynamic table corresponding
+// DynamicTableFor returns the *modelInfo for the dynamic table corresponding
 // to the input tablename
 // If no table is mapped to that tablename an error is returned.
 // If checkPK is true and the mapped table has no registered PKs, an error is returned.
-func (m *DbMap) DynamicTableFor(tableName string, checkPK bool) (*TableMap, error) {
+func (m *DbMap) DynamicTableFor(tableName string, checkPK bool) (*modelInfo, error) {
 	table, found := m.dynamicTableFind(tableName)
 	if !found {
 		return nil, fmt.Errorf("gorp: no table found for name: %v", tableName)
 	}
 
-	if checkPK && len(table.keys) < 1 {
+	if checkPK && len(table.fields.keys) < 1 {
 		e := fmt.Sprintf("gorp: no keys defined for table: %s",
-			table.TableName)
+			table.table)
 		return nil, errors.New(e)
 	}
 
@@ -939,7 +773,7 @@ func (m *DbMap) Prepare(query string) (*sql.Stmt, error) {
 	return m.Db.Prepare(query)
 }
 
-func tableOrNil(m *DbMap, t reflect.Type, name string) *TableMap {
+func tableOrNil(m *DbMap, t reflect.Type, name string) *modelInfo {
 	if name != "" {
 		// Search by table name (dynamic tables)
 		if table, found := m.dynamicTableFind(name); found {
@@ -948,8 +782,7 @@ func tableOrNil(m *DbMap, t reflect.Type, name string) *TableMap {
 		return nil
 	}
 
-	for i := range m.tables {
-		table := m.tables[i]
+	for _, table := range modelCache.all() {
 		if table.gotype == t {
 			return table
 		}
@@ -957,7 +790,7 @@ func tableOrNil(m *DbMap, t reflect.Type, name string) *TableMap {
 	return nil
 }
 
-func getTableByName(m *DbMap, tableName string) *TableMap {
+func getTableByName(m *DbMap, tableName string) *modelInfo {
 	if tableName != "" {
 		// Search by table name (dynamic tables)
 		if table, found := m.dynamicTableFind(tableName); found {
@@ -968,14 +801,14 @@ func getTableByName(m *DbMap, tableName string) *TableMap {
 
 	for i := range m.tables {
 		table := m.tables[i]
-		if table.TableName == tableName {
+		if table.table == tableName {
 			return table
 		}
 	}
 	return nil
 }
 
-func (m *DbMap) tableForPointer(ptr interface{}, checkPK bool) (*TableMap, reflect.Value, error) {
+func (m *DbMap) tableForPointer(ptr interface{}, checkPK bool) (*modelInfo, reflect.Value, error) {
 	ptrv := reflect.ValueOf(ptr)
 	if ptrv.Kind() != reflect.Ptr {
 		e := fmt.Sprintf("gorp: passed non-pointer: %v (kind=%v)", ptr,
@@ -984,7 +817,7 @@ func (m *DbMap) tableForPointer(ptr interface{}, checkPK bool) (*TableMap, refle
 	}
 	elem := ptrv.Elem()
 	ifc := elem.Interface()
-	var t *TableMap
+	var t *modelInfo
 	var err error
 	tableName := ""
 	if dyn, isDyn := ptr.(DynamicTable); isDyn {

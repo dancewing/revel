@@ -27,6 +27,8 @@ type SqlServerDialect struct {
 	Version string
 }
 
+var _ Dialect = new(SqlServerDialect)
+
 func (d SqlServerDialect) ToSqlType(val reflect.Type, maxsize int, isAutoIncr bool) string {
 	switch val.Kind() {
 	case reflect.Ptr:
@@ -93,7 +95,7 @@ func (d SqlServerDialect) AutoIncrBindValue() string {
 	return ""
 }
 
-func (d SqlServerDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
+func (d SqlServerDialect) AutoIncrInsertSuffix(col *fieldInfo) string {
 	return ""
 }
 

@@ -246,19 +246,19 @@ func columnToFieldIndex(m *DbMap, t reflect.Type, name string, cols []string) ([
 	for x := range cols {
 		colName := strings.ToLower(cols[x])
 		field, found := t.FieldByNameFunc(func(fieldName string) bool {
-			field, _ := t.FieldByName(fieldName)
-			cArguments := strings.Split(field.Tag.Get("db"), ",")
-			fieldName = cArguments[0]
+			// field, _ := t.FieldByName(fieldName)
+			// cArguments := strings.Split(field.Tag.Get("orm"), ";")
+			// fieldName = cArguments[0]
 
-			if fieldName == "-" {
-				return false
-			} else if fieldName == "" {
-				fieldName = field.Name
-			}
+			// if fieldName == "-" {
+			// 	return false
+			// } else if fieldName == "" {
+			// 	fieldName = field.Name
+			// }
 			if tableMapped {
 				colMap := colMapOrNil(table, fieldName)
 				if colMap != nil {
-					fieldName = colMap.ColumnName
+					fieldName = colMap.column
 				}
 			}
 			return colName == strings.ToLower(fieldName)
@@ -336,7 +336,7 @@ func toType(i interface{}) (reflect.Type, error) {
 }
 
 type foundTable struct {
-	table   *TableMap
+	table   *modelInfo
 	dynName *string
 }
 
@@ -456,7 +456,7 @@ func delete(m *DbMap, exec SqlExecutor, list ...interface{}) (int64, error) {
 		}
 
 		if rows == 0 && bi.existingVersion > 0 {
-			return lockError(m, exec, table.TableName,
+			return lockError(m, exec, table.table,
 				bi.existingVersion, elem, bi.keys...)
 		}
 
@@ -505,7 +505,7 @@ func update(m *DbMap, exec SqlExecutor, colFilter ColumnFilter, list ...interfac
 		}
 
 		if rows == 0 && bi.existingVersion > 0 {
-			return lockError(m, exec, table.TableName,
+			return lockError(m, exec, table.table,
 				bi.existingVersion, elem, bi.keys...)
 		}
 
@@ -569,7 +569,7 @@ func insert(m *DbMap, exec SqlExecutor, list ...interface{}) error {
 			case TargetQueryInserter:
 				var idQuery = table.ColMap(bi.autoIncrFieldName).GeneratedIdQuery
 				if idQuery == "" {
-					return fmt.Errorf("gorp: cannot set %s value if its ColumnMap.GeneratedIdQuery is empty", bi.autoIncrFieldName)
+					return fmt.Errorf("gorp: cannot set %s value if its fieldInfo.GeneratedIdQuery is empty", bi.autoIncrFieldName)
 				}
 				err := inserter.InsertQueryToTarget(exec, bi.query, idQuery, f.Addr().Interface(), bi.args...)
 				if err != nil {

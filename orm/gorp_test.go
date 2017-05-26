@@ -423,8 +423,8 @@ var dynTableInst2 = TenantDynamic{curTable: "t_2_tenant_dynamic"}
 
 func dynamicTablesTest(t *testing.T, dbmap *gorp.DbMap) {
 
-	dynamicTablesTestTableMap(t, dbmap, &dynTableInst1)
-	dynamicTablesTestTableMap(t, dbmap, &dynTableInst2)
+	dynamicTablesTestmodelInfo(t, dbmap, &dynTableInst1)
+	dynamicTablesTestmodelInfo(t, dbmap, &dynTableInst2)
 
 	// TEST - dbmap.Insert using dynTableInst1
 	dynTableInst1.Name = "Test Name 1"
@@ -453,7 +453,7 @@ func dynamicTablesTest(t *testing.T, dbmap *gorp.DbMap) {
 
 }
 
-func dynamicTablesTestTableMap(t *testing.T,
+func dynamicTablesTestmodelInfo(t *testing.T,
 	dbmap *gorp.DbMap,
 	inpInst *TenantDynamic) {
 
@@ -1574,7 +1574,7 @@ func TestColumnFilter(t *testing.T) {
 
 	inv1.Memo = "c"
 	inv1.IsPaid = true
-	_updateColumns(dbmap, func(col *gorp.ColumnMap) bool {
+	_updateColumns(dbmap, func(col *gorp.fieldInfo) bool {
 		return col.ColumnName == "Memo"
 	}, inv1)
 

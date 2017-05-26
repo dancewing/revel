@@ -20,15 +20,7 @@ import (
 // Implementation of Dialect for Oracle databases.
 type OracleDialect struct{}
 
-// oracle operators.
-var oracleOperators = map[string]string{
-	"exact":       "= ?",
-	"gt":          "> ?",
-	"gte":         ">= ?",
-	"lt":          "< ?",
-	"lte":         "<= ?",
-	"//iendswith": "LIKE ?",
-}
+var _ Dialect = new(OracleDialect)
 
 func (d OracleDialect) QuerySuffix() string { return "" }
 
@@ -90,7 +82,7 @@ func (d OracleDialect) AutoIncrBindValue() string {
 	return "NULL"
 }
 
-func (d OracleDialect) AutoIncrInsertSuffix(col *ColumnMap) string {
+func (d OracleDialect) AutoIncrInsertSuffix(col *fieldInfo) string {
 	return ""
 }
 
@@ -153,9 +145,4 @@ func (d OracleDialect) IfTableExists(command, schema, table string) string {
 
 func (d OracleDialect) IfTableNotExists(command, schema, table string) string {
 	return fmt.Sprintf("%s if not exists", command)
-}
-
-// OperatorSQL get oracle operator.
-func (d OracleDialect) OperatorSQL(operator string) string {
-	return oracleOperators[operator]
 }
