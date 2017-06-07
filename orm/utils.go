@@ -201,19 +201,25 @@ func ToInt64(value interface{}) (d int64) {
 // snake string, XxYy to xx_yy , XxYY to xx_yy
 func snakeString(s string) string {
 	data := make([]byte, 0, len(s)*2)
-	j := false
 	num := len(s)
 	for i := 0; i < num; i++ {
 		d := s[i]
-		if i > 0 && d >= 'A' && d <= 'Z' && j {
-			data = append(data, '_')
-		}
-		if d != '_' {
-			j = true
+		if i > 0 {
+			t := s[i-1]
+			if (isCaptial(d)) && !isCaptial(t) {
+				data = append(data, '_')
+			}
 		}
 		data = append(data, d)
 	}
 	return strings.ToLower(string(data[:]))
+}
+
+func isCaptial(d byte) bool {
+	if d >= 'A' && d <= 'Z' {
+		return true
+	}
+	return false
 }
 
 // camel string, xx_yy to XxYy
@@ -403,38 +409,114 @@ outFor:
 
 // get pk column info.
 func getExistPk(mi *modelInfo, ind reflect.Value) (column string, value interface{}, exist bool) {
-	//fi := mi.fields.keys
 
-	// v := ind.FieldByIndex(fi.fieldIndex)
-	// if fi.fieldType&IsPositiveIntegerField > 0 {
-	// 	vu := v.Uint()
-	// 	exist = vu > 0
-	// 	value = vu
-	// } else if fi.fieldType&IsIntegerField > 0 {
-	// 	vu := v.Int()
-	// 	exist = true
-	// 	value = vu
-	// } else if fi.fieldType&IsRelField > 0 {
-	// 	_, value, exist = getExistPk(fi.relModelInfo, reflect.Indirect(v))
-	// } else {
-	// 	vu := v.String()
-	// 	exist = vu != ""
-	// 	value = vu
-	// }
+	if len(mi.fields.keys) > 1 {
+		panic(fmt.Errorf("only one primary key can be set in %s", mi.name))
+	}
 
-	//column = fi.ColumnName
+	fi := mi.fields.GetOnePrimaryKey()
+
+	v := ind.FieldByIndex(fi.fieldIndex)
+	if fi.fieldType&IsPositiveIntegerField > 0 {
+		vu := v.Uint()
+		exist = vu > 0
+		value = vu
+	} else if fi.fieldType&IsIntegerField > 0 {
+		vu := v.Int()
+		exist = true
+		value = vu
+	} else if fi.fieldType&IsRelField > 0 {
+		_, value, exist = getExistPk(fi.relModelInfo, reflect.Indirect(v))
+	} else {
+		vu := v.String()
+		exist = vu != ""
+		value = vu
+	}
+
+	column = fi.name
 	return
 }
 
-func convertToFilterExpr(input string, operator string) (expr string) {
+func getFieldValue(m interface{}, field string) (arg interface{}) {
+	e := reflect.ValueOf(m)
+	rk := e.Kind()
 
-	if input == "" {
-		expr = ""
-		return
+	if rk == reflect.Ptr {
+		e = e.Elem()
 	}
-	d := strings.Split(input, ".")
-	d = append(d, operator)
-	expr = strings.Join(d, "__")
+
+	val := e.FieldByName(field)
+
+	//	val := reflect.ValueOf(m)
+
+	kind := val.Kind()
+	if kind == reflect.Ptr {
+		val = val.Elem()
+		kind = val.Kind()
+		arg = val.Interface()
+	}
+
+	switch kind {
+	case reflect.String:
+		v := val.String()
+		arg = v
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		arg = val.Int()
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		arg = val.Uint()
+	case reflect.Float32:
+		arg, _ = StrTo(ToStr(arg)).Float64()
+	case reflect.Float64:
+		arg = val.Float()
+	case reflect.Bool:
+		arg = val.Bool()
+	case reflect.Slice, reflect.Array:
+		if _, ok := arg.([]byte); ok {
+			//continue outFor
+		}
+
+		var args []interface{}
+		for i := 0; i < val.Len(); i++ {
+			v := val.Index(i)
+
+			var vu interface{}
+			if v.CanInterface() {
+				vu = v.Interface()
+			}
+
+			if vu == nil {
+				continue
+			}
+
+			args = append(args, vu)
+		}
+
+		// if len(args) > 0 {
+		// 	p := getFlatParams(fi, args, tz)
+		// 	params = append(params, p...)
+		// }
+		// continue outFor
+	case reflect.Struct:
+		if _, ok := arg.(time.Time); ok {
+
+		} else {
+			typ := val.Type()
+			name := getFullName(typ)
+			var value interface{}
+			if mmi, err := Database().Get().TableFor(typ, true); err != nil {
+				if _, vu, exist := getExistPk(mmi, val); exist {
+					value = vu
+				}
+			}
+
+			arg = value
+
+			if arg == nil {
+				panic(fmt.Errorf("need a valid args value, unknown table or value `%s`", name))
+			}
+		}
+	}
+
 	return
 
 }

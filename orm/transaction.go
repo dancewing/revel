@@ -218,3 +218,11 @@ func (t *Transaction) CreateCriteria(ptrStructOrTableName interface{}) (criteria
 	}
 	return
 }
+
+func (t *Transaction) SaveM2M(model interface{}, fields ...string) error {
+	return saveM2M(t.dbmap, t, model, fields...)
+}
+
+func (t *Transaction) QueryM2M(model interface{}, fields ...string) error {
+	return queryM2M(t.dbmap, t, model, fields...)
+}

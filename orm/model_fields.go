@@ -66,6 +66,20 @@ func (f *fields) GetByName(name string) *fieldInfo {
 	return f.fields[name]
 }
 
+// get field info by name
+func (f *fields) GetOnePrimaryKey() *fieldInfo {
+	if len(f.keys) > 0 {
+		i := 0
+		for _, f := range f.keys {
+			if i == 0 {
+				return f
+			}
+			i++
+		}
+	}
+	return nil
+}
+
 // get field info by column name
 func (f *fields) GetByColumn(column string) *fieldInfo {
 	return f.columns[column]
@@ -139,7 +153,7 @@ type fieldInfo struct {
 	mi                  *modelInfo
 	fieldIndex          []int
 	fieldType           int
-	dbcol               bool // table column fk and onetoone
+	dbcol               bool // if RelType is RelManyToMany, RelReverseMany, RelReverseOne value will be false
 	inModel             bool
 	name                string // fieldName
 	fullName            string

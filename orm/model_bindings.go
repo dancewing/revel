@@ -53,6 +53,7 @@ type bindPlan struct {
 	autoIncrIdx       int
 	autoIncrFieldName string
 	once              sync.Once
+	paramValues       []interface{}
 }
 
 func (plan *bindPlan) createBindInstance(elem reflect.Value, conv TypeConverter) (bindInstance, error) {

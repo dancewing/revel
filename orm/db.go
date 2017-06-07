@@ -857,3 +857,11 @@ func (m *DbMap) trace(started time.Time, query string, args ...interface{}) {
 		m.logger.Printf("%s%s [%s] (%v)", m.logPrefix, query, margs, (time.Now().Sub(started)))
 	}
 }
+
+func (m *DbMap) SaveM2M(model interface{}, fields ...string) error {
+	return saveM2M(m, m, model, fields...)
+}
+
+func (m *DbMap) QueryM2M(model interface{}, fields ...string) error {
+	return queryM2M(m, m, model, fields...)
+}

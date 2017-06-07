@@ -594,3 +594,122 @@ func insert(m *DbMap, exec SqlExecutor, list ...interface{}) error {
 	}
 	return nil
 }
+
+func saveM2M(m *DbMap, exec SqlExecutor, model interface{}, fields ...string) error {
+
+	table, elem, err := m.tableForPointer(model, false)
+	if err != nil {
+		return err
+	}
+
+	//eval := elem.Addr().Interface()
+	// if v, ok := eval.(HasPreInsert); ok {
+	// 	err := v.PreInsert(exec)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
+
+	for index := range fields {
+
+		field := fields[index]
+
+		rflied := elem.FieldByName(field)
+
+		if rflied.Kind() != reflect.Slice {
+			panic(fmt.Sprintf("%s of %s must have slice values", rflied, elem.Type()))
+		} else {
+			if rflied.Type().Elem().Kind() != reflect.Ptr {
+				panic(fmt.Errorf("rel/reverse:many slice must be []*%s", rflied.Type().Elem().Name()))
+			}
+		}
+
+		val := reflect.ValueOf(rflied.Interface())
+
+		var args []interface{}
+		for i := 0; i < val.Len(); i++ {
+			v := val.Index(i)
+
+			var vu interface{}
+			if v.CanInterface() {
+				vu = v.Interface()
+			}
+
+			if vu == nil {
+				continue
+			}
+
+			args = append(args, vu)
+		}
+
+		if len(args) == 0 {
+			continue
+		}
+
+		bi, err := table.bindM2MInsert(elem, field, args)
+		if err != nil {
+			return err
+		}
+
+		_, err2 := exec.Exec(bi.query, bi.args...)
+		if err2 != nil {
+			return err2
+		}
+
+	}
+
+	return nil
+}
+
+func queryM2M(m *DbMap, exec SqlExecutor, model interface{}, fields ...string) error {
+
+	table, elem, err := m.tableForPointer(model, false)
+	if err != nil {
+		return err
+	}
+
+	//check mode is pointer value
+
+	for index := range fields {
+
+		field := fields[index]
+
+		rflied := elem.FieldByName(field)
+
+		tf := table.fields.GetByName(field)
+
+		if rflied.Kind() != reflect.Slice {
+			panic(fmt.Sprintf("%s of %s must have slice values", rflied, elem.Type()))
+		} else {
+			if rflied.Type().Elem().Kind() != reflect.Ptr {
+				panic(fmt.Errorf("rel/reverse:many slice must be []*%s", rflied.Type().Elem().Name()))
+			}
+		}
+
+		bi, err := table.bindM2MQuery(elem, field)
+		if err != nil {
+			return err
+		}
+
+		rvs, err2 := exec.Select(tf.relModelInfo.model, bi.query, bi.args...)
+		if err2 != nil {
+			return err2
+		}
+
+		if rvs != nil {
+
+			//Copy Values
+			rvsf := reflect.ValueOf(rvs)
+			myType := reflect.TypeOf(tf.relModelInfo.model)
+			slice := reflect.MakeSlice(reflect.SliceOf(myType), len(rvs), len(rvs))
+
+			for index := 0; index < rvsf.Len(); index++ {
+				slice.Index(index).Set(rvsf.Index(index).Elem())
+			}
+
+			rflied.Set(slice)
+		}
+	}
+
+	return nil
+}

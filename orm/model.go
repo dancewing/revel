@@ -39,6 +39,8 @@ type modelInfo struct {
 	updatePlan     bindPlan
 	deletePlan     bindPlan
 	getPlan        bindPlan
+	m2mInsertPlan  bindPlan
+	m2mQueryPlan   bindPlan
 
 	pkg       string
 	name      string
@@ -127,6 +129,8 @@ func (t *modelInfo) ResetSql() {
 	t.updatePlan = bindPlan{}
 	t.deletePlan = bindPlan{}
 	t.getPlan = bindPlan{}
+	t.m2mInsertPlan = bindPlan{}
+	t.m2mQueryPlan = bindPlan{}
 }
 
 // SetKeys lets you specify the fields on a struct that map to primary
@@ -272,8 +276,6 @@ func (t *modelInfo) SetVersionCol(field string) *fieldInfo {
 // the specified table and any associated schema
 func (t *modelInfo) SqlForCreate(ifNotExists bool) string {
 
-	fmt.Println("creating table : ", t.table)
-
 	s := bytes.Buffer{}
 	dialect := Database().Get().Dialect
 
@@ -298,9 +300,7 @@ func (t *modelInfo) SqlForCreate(ifNotExists bool) string {
 	x := 0
 	for _, col := range t.fields.columns {
 
-		fmt.Println(fmt.Sprintf("check field : %s, fieldType: %s ", col.name, col.fieldType))
-
-		if col.transient || col.fieldType == RelManyToMany || col.fieldType == RelReverseMany {
+		if col.transient || !col.dbcol {
 			continue
 		}
 
@@ -308,16 +308,17 @@ func (t *modelInfo) SqlForCreate(ifNotExists bool) string {
 			s.WriteString(", ")
 		}
 
-		// var stype string
+		stype := ""
 
-		// if col.rel && (col.fieldType == RelForeignKey || col.fieldType == RelOneToOne) {
-		// 	//stype = dialect.ToSqlType(col.gotype, col.size, col.isAutoIncr)
-		// 	stype = dialect.ToSqlType(col.reverseFieldInfo.gotype, col.reverseFieldInfo.size, false)
-		// } else {
-		// 	stype = dialect.ToSqlType(col.gotype, col.size, col.auto)
-		// }
+		if col.rel {
+			if col.fieldType == RelForeignKey || col.fieldType == RelOneToOne {
+				stype = dialect.ToSqlType(col.relModelInfo.fields.GetOnePrimaryKey().gotype, col.relModelInfo.fields.GetOnePrimaryKey().size, false)
+			}
 
-		stype := dialect.ToSqlType(col.gotype, col.size, col.auto)
+		} else {
+			stype = dialect.ToSqlType(col.gotype, col.size, col.auto)
+		}
+		//stype := dialect.ToSqlType(col.gotype, col.size, col.auto)
 
 		s.WriteString(fmt.Sprintf("%s %s", dialect.QuoteField(col.column), stype))
 
@@ -774,8 +775,8 @@ func newM2MModelInfo(m1, m2 *modelInfo) (mi *modelInfo) {
 	f2.name = camelString(m2.table)
 	f1.fullName = mi.fullName + "." + f1.name
 	f2.fullName = mi.fullName + "." + f2.name
-	f1.column = m1.table + "_id"
-	f2.column = m2.table + "_id"
+	f1.column = m1.fields.GetOnePrimaryKey().column
+	f2.column = m2.fields.GetOnePrimaryKey().column
 	f1.rel = true
 	f2.rel = true
 	f1.relTable = m1.table
