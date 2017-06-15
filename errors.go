@@ -21,6 +21,7 @@ type Error struct {
 	Stack                    string   // The raw stack trace string from debug.Stack().
 	MetaError                string   // Error that occurred producing the error page.
 	Link                     string   // A configurable link to wrap the error source in
+	Status                   int      // Error for http status
 }
 
 // SourceLine structure to hold the per-source-line details.

@@ -208,8 +208,30 @@ func (c *Controller) Forbidden(msg string, objs ...interface{}) Result {
 	c.Response.Status = http.StatusForbidden
 	return c.RenderError(&Error{
 		Title:       "Forbidden",
+		Status:      http.StatusForbidden,
 		Description: finalText,
 	})
+}
+
+// Unauthorized returns an HTTP 401 Unauthorized response whose body is the
+// formatted string of msg and objs.
+func (c *Controller) Unauthorized(msg string, objs ...interface{}) Result {
+	finalText := msg
+	if len(objs) > 0 {
+		finalText = fmt.Sprintf(msg, objs...)
+	}
+	c.Response.Status = http.StatusUnauthorized
+	return c.RenderError(&Error{
+		Title:       "Unauthorized",
+		Status:      http.StatusUnauthorized,
+		Description: finalText,
+	})
+}
+
+// EmptyWithStatus returns an HTTP status code with empty message in response
+func (c *Controller) EmptyWithStatus(status int) Result {
+	c.Response.Status = status
+	return c.RenderText("")
 }
 
 // RenderFile returns a file, either displayed inline or downloaded
